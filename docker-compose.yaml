@@ -1,0 +1,41 @@
+---
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: mydatabase
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+    networks:
+      - app-network
+
+  ubuntu:
+    image: ubuntu:latest
+    environment:
+      DATABASE_URL: postgresql://myuser:mypassword@postgres/mydatabase
+      EOD_HISTORICAL_DATA_API_KEY: 65c8851987a197.03633556
+    depends_on:
+      - postgres
+    command: >
+      sh -c "apt-get update &&
+              apt-get install -y postgresql-client &&
+              apt-get install -y vim python3-pip python3-minimal &&
+              pip install --upgrade pip &&
+              pip install -r src/requirements.txt &&
+              tail -f /dev/null"
+    networks:
+      - app-network
+    volumes:
+      - ./src:/src
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
