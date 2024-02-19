@@ -1,0 +1,12 @@
+
+{% extends 'base.html' %}
+
+{%block title%}Home{%endblock%}
+
+{% block navbar %}
+  {{ navlink(url_for('portfolios'), 'Portfolios') }}
+{% endblock navbar %}
+
+{% block drawer %}
+  {{ navlink(url_for('portfolios'), 'Portfolios') }}
+{% endblock drawer %}

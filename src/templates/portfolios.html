@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+
+{%block title%}Portfolios{% endblock %}
+
+{% block navbar %}
+  {{ navlink(url_for('home'), 'Home') }}
+{% endblock navbar %}
+
+{% block drawer %}
+  {{ navlink(url_for('home'), 'Home') }}
+{% endblock drawer %}
+
+{% block content %}
+{{ container() }}
+    <table class="mdl-data-table mdl-js-data-table mdl-data-table--selectable mdl-shadow--2dp">
+      <thead>
+        <tr>
+          <th class="mdl-data-table__cell--non-numeric">Name</th>
+          <th>Invest</th>
+          <th>Cash</th>
+          <th>Bank</th>
+          <th>Value</th>
+        </tr>
+      </thead>
+      <tbody>
+    {% for portfolio in portfolios %}
+        <tr>
+            <td class="mdl-data-table__cell--non-numeric">
+              <a href="/portfolios/{{portfolio.id}}">{{ portfolio.name }}</a>
+            </td>
+            <td>
+              {{ "%10.2f"| format(portfolio.invest) }}
+            </td>
+            <td>
+              {{ "%10.2f"| format(portfolio.cash) }}
+            </td>
+            <td>
+              {{ "%10.2f"| format(portfolio.bank) }}
+            </td>
+            <td>
+              {{ "%10.2f"| format(portfolio.value) }}
+            </td>
+        </tr>
+    {% endfor %}
+      </tbody>
+    </table>
+{{ enddiv() }}
+{% endblock %}

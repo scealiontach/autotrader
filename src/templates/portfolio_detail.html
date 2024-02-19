@@ -1,0 +1,31 @@
+
+{% extends 'base.html' %}
+
+{%block title%}Home{%endblock%}
+
+{% block navbar %}
+  {{ navlink(url_for('home'), 'Home') }}
+  {{ navlink(url_for('portfolios'), 'Portfolios') }}
+{% endblock navbar %}
+
+{% block drawer %}
+  {{ navlink(url_for('home'), 'Home') }}
+  {{ navlink(url_for('portfolios'), 'Portfolios') }}
+{% endblock drawer %}
+
+{% block content %}
+<div class="mdl-card">
+<div class="mdl-card__title">
+  <h2 class="mdl-card__title-text">{{portfolio.name}}</h2>
+  <div class="mdl-card__supporting-text">
+    <p>{{portfolio.description}}</p>
+  </div>
+  <div class="mdl-card__supporting-text">
+    <p>{{portfolio.invest}}</p>
+  </div>
+  <div class="mdl-card__supporting-text">
+    <p>{{portfolio.value}}</p>
+  </div>
+</div>
+{% endblock content %}
+```
