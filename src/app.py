@@ -1,11 +1,9 @@
 # from constants import DATABASE_URL
 from datetime import datetime
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, g
 from flask_material import Material
-from flask_sqlalchemy import SQLAlchemy
 from models import (
-    Base,
     CashTransaction,
     Lot,
     Portfolio,
@@ -14,21 +12,24 @@ from models import (
     TradingRecommendation,
     Transaction,
 )
+
+from database import Session
 import portfolio
-import constants
-from utils import get_database_connection
 
 app = Flask(__name__, template_folder="./templates")
 Material(app)
-app.config["SQLALCHEMY_DATABASE_URI"] = (
-    "postgresql://myuser:mypassword@localhost/mydatabase"  # Update as needed
-)
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-constants.DATABASE_URL = app.config["SQLALCHEMY_DATABASE_URI"]
 
 
-db = SQLAlchemy(app, model_class=Base)
+@app.before_request
+def before_request():
+    g.db_session = Session()
+
+
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    # Remove and close the session at the end of the request
+    g.db_session.close()
+    Session.remove()
 
 
 @app.route("/")
@@ -41,8 +42,8 @@ def create_portfolio():
     data = request.json
     if data:
         new_portfolio = Portfolio(name=data["name"], owner=data.get("owner"))
-        db.session.add(new_portfolio)
-        db.session.commit()
+        g.db_session.add(new_portfolio)
+        g.db_session.commit()
         return (
             jsonify(
                 {"message": "Portfolio created successfully", "id": new_portfolio.id}
@@ -55,7 +56,7 @@ def create_portfolio():
 
 @app.route("/portfolios", methods=["GET"])
 def portfolios():
-    portfolios_data = db.session.query(Portfolio).all()
+    portfolios_data = g.db_session.query(Portfolio).all()
     portfolios = [
         {"id": p.id, "name": p.name, "owner": p.owner, "createddate": p.createddate}
         for p in portfolios_data
@@ -82,7 +83,7 @@ def portfolios():
 
 @app.route("/portfolios/<int:portfolio_id>", methods=["GET"])
 def portfolio_detail(portfolio_id):
-    _portfolio = db.session.query(Portfolio).get(portfolio_id)
+    _portfolio = g.db_session.query(Portfolio).get(portfolio_id)
     if ("fmt" in request.args) and (request.args["fmt"] == "json"):
         if _portfolio:
             return jsonify(
@@ -114,7 +115,7 @@ def portfolio_detail(portfolio_id):
 @app.route("/api/portfolios/<int:portfolio_id>/recommendations", methods=["GET"])
 def get_portfolio_recommendations(portfolio_id):
     result = (
-        db.session.query(TradingRecommendation)
+        g.db_session.query(TradingRecommendation)
         .join(Portfolio)
         .where(Portfolio.id == portfolio_id)
         .all()
@@ -134,24 +135,24 @@ def get_portfolio_recommendations(portfolio_id):
 
 @app.route("/api/portfolios/<int:portfolio_id>", methods=["PUT"])
 def update_portfolio(portfolio_id):
-    portfolio = db.session.query(Portfolio).get(portfolio_id)
+    portfolio = g.db_session.query(Portfolio).get(portfolio_id)
     if portfolio:
         data = request.json
         if data is None:
             return jsonify({"message": "Invalid input"}), 400
         portfolio.name = data["name"]
         portfolio.owner = data.get("owner")
-        db.session.commit()
+        g.db_session.commit()
         return jsonify({"message": "Portfolio updated successfully"})
     return jsonify({"message": "Portfolio not found"}), 404
 
 
 @app.route("/api/portfolios/<int:portfolio_id>", methods=["DELETE"])
 def delete_portfolio(portfolio_id):
-    portfolio = db.session.query(Portfolio).get(portfolio_id)
+    portfolio = g.db_session.query(Portfolio).get(portfolio_id)
     if portfolio:
-        db.session.delete(portfolio)
-        db.session.commit()
+        g.db_session.delete(portfolio)
+        g.db_session.commit()
         return jsonify({"message": "Portfolio deleted successfully"})
     return jsonify({"message": "Portfolio not found"}), 404
 
@@ -159,7 +160,7 @@ def delete_portfolio(portfolio_id):
 @app.route("/api/portfolios/<int:portfolio_id>/transactions", methods=["GET"])
 def get_portfolio_transactions(portfolio_id):
     transactions = (
-        db.session.query(Transaction)
+        g.db_session.query(Transaction)
         .filter_by(portfolio_id=portfolio_id)
         .order_by(Transaction.transaction_date.desc())
         .all()
@@ -182,7 +183,7 @@ def get_portfolio_transactions(portfolio_id):
 @app.route("/api/portfolios/<int:portfolio_id>/cash", methods=["GET"])
 def get_portfolio_cashtransactions(portfolio_id):
     transactions = (
-        db.session.query(CashTransaction)
+        g.db_session.query(CashTransaction)
         .filter_by(portfolio_id=portfolio_id)
         .order_by(CashTransaction.transaction_date.desc())
         .all()
@@ -205,7 +206,7 @@ def get_portfolio_cashtransactions(portfolio_id):
 @app.route("/api/portfolios/<int:portfolio_id>/positions", methods=["GET"])
 def get_portfolio_positions(portfolio_id):
     positions = (
-        db.session.query(PortfolioPosition)
+        g.db_session.query(PortfolioPosition)
         .filter_by(portfolio_id=portfolio_id)
         .order_by(PortfolioPosition.purchasedate.desc())
         .all()
@@ -228,7 +229,7 @@ def get_portfolio_positions(portfolio_id):
 @app.route("/api/positions", methods=["GET"])
 def get_positions():
     positions = (
-        db.session.query(PortfolioPosition)
+        g.db_session.query(PortfolioPosition)
         .order_by(PortfolioPosition.purchasedate.desc())
         .all()
     )
@@ -250,7 +251,7 @@ def get_positions():
 
 @app.route("/api/positions/<int:position_id>", methods=["GET"])
 def get_position(position_id):
-    position = db.session.query(PortfolioPosition).get(position_id)
+    position = g.db_session.query(PortfolioPosition).get(position_id)
     if position:
         return jsonify(
             {
@@ -270,7 +271,7 @@ def get_position(position_id):
 @app.route("/api/portfolios/<int:portfolio_id>/lots", methods=["GET"])
 def get_position_lots(portfolio_id):
     lots = (
-        db.session.query(Lot)
+        g.db_session.query(Lot)
         .filter_by(portfolio_id=portfolio_id)
         .order_by(Lot.id, Lot.purchasedate.desc())
         .all()
@@ -291,7 +292,7 @@ def get_position_lots(portfolio_id):
 
 @app.route("/api/products", methods=["GET"])
 def get_products():
-    products = db.session.query(Product).order_by(Product.symbol).all()
+    products = g.db_session.query(Product).order_by(Product.symbol).all()
     products_data = [
         {
             "id": p.id,
@@ -311,7 +312,7 @@ def get_products():
 
 @app.route("/api/products/id/<int:product_id>", methods=["GET"])
 def get_product(product_id):
-    product = db.session.query(Product).get(product_id)
+    product = g.db_session.query(Product).get(product_id)
     if product:
         return jsonify(
             {
@@ -331,7 +332,7 @@ def get_product(product_id):
 
 @app.route("/api/products/sym/<string:symbol>", methods=["GET"])
 def get_product_by_symbol(symbol):
-    product = db.session.query(Product).filter_by(symbol=symbol).first()
+    product = g.db_session.query(Product).filter_by(symbol=symbol).first()
     if product:
         return jsonify(
             {
