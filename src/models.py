@@ -1,4 +1,3 @@
-from ast import For
 from datetime import datetime
 from typing import Optional
 
@@ -11,7 +10,6 @@ from sqlalchemy import (
     String,
     DECIMAL,
     Text,
-    desc,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
