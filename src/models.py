@@ -33,34 +33,6 @@ class Portfolio(Base):
         return "<Portfolio %r>" % self.name
 
 
-class Product(Base):
-    __tablename__ = "products"
-    id: Mapped[int] = mapped_column("productid", Integer, primary_key=True)
-    symbol: Mapped[str] = mapped_column(String(10), unique=True, nullable=False)
-    company_name: Mapped[Optional[str]] = mapped_column(
-        "companyname", String(255), unique=False, nullable=True
-    )
-    sector: Mapped[Optional[str]] = mapped_column(
-        String(255), unique=False, nullable=True
-    )
-    market: Mapped[Optional[str]] = mapped_column(
-        String(255), unique=False, nullable=True
-    )
-    is_active: Mapped[bool] = mapped_column(
-        "isactive", Boolean, unique=False, nullable=False, default=True
-    )
-    dividend_rate: Mapped[Optional[DECIMAL]] = mapped_column(
-        DECIMAL(10, 2), unique=False, nullable=True
-    )
-    info: Mapped[Optional[JSON]] = mapped_column(JSON, unique=False, nullable=True)
-    createddate: Mapped[Date] = mapped_column(
-        Date, unique=False, nullable=False, default=datetime.today
-    )
-
-    def __repr__(self):
-        return "<Product %r>" % self.symbol
-
-
 class Transaction(Base):
     __tablename__ = "transactions"
     id: Mapped[int] = mapped_column("transactionid", Integer, primary_key=True)
@@ -112,26 +84,6 @@ class PortfolioPosition(Base):
 
     def __repr__(self):
         return "<PortfolioPosition %r>" % self.id
-
-
-class Lot(Base):
-    __tablename__ = "lots"
-    id: Mapped[int] = mapped_column("lotid", Integer, primary_key=True)
-    portfolio_id: Mapped[int] = mapped_column(
-        "portfolioid", ForeignKey("portfolios.portfolioid")
-    )
-    product_id: Mapped[int] = mapped_column(
-        "productid", ForeignKey("products.productid")
-    )
-    quantity: Mapped[DECIMAL] = mapped_column(
-        DECIMAL(14, 6), unique=False, nullable=False
-    )
-    purchasprice: Mapped[DECIMAL] = mapped_column(
-        "purchaseprice", DECIMAL(10, 2), unique=False, nullable=False
-    )
-    purchasedate: Mapped[Date] = mapped_column(
-        "purchasedate", Date, unique=False, nullable=False
-    )
 
 
 class TradingRecommendation(Base):

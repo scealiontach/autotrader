@@ -5,16 +5,16 @@ from flask import Flask, render_template, request, jsonify, g
 from flask_material import Material
 from models import (
     CashTransaction,
-    Lot,
     Portfolio,
     PortfolioPosition,
-    Product,
     TradingRecommendation,
     Transaction,
 )
 
+
 from database import Session
-import portfolio
+from portfolio import Lot, portfolio_for_name
+from product import Product
 
 app = Flask(__name__, template_folder="./templates")
 Material(app)
@@ -66,16 +66,16 @@ def portfolios():
     else:
         rows = []
         for p in portfolios:
-            _p = portfolio.portfolio_for_name(p["name"])
+            _p = portfolio_for_name(p["name"])
             as_of = datetime.today()
             rows.append(
                 {
                     "id": _p.portfolio_id,
                     "name": p["name"],
-                    "cash": _p.wallet.cash_balance(as_of),
-                    "invest": _p.wallet.invest_balance(as_of),
+                    "cash": _p.cash_balance(as_of),
+                    "invest": _p.invest_balance(as_of),
                     "value": _p.value(as_of),
-                    "bank": _p.wallet.bank_balance(as_of),
+                    "bank": _p.bank_balance(as_of),
                 }
             )
         return render_template("portfolios.html", portfolios=rows)
@@ -98,15 +98,15 @@ def portfolio_detail(portfolio_id):
     else:
         if _portfolio:
 
-            _p = portfolio.portfolio_for_name(_portfolio.name)
+            _p = portfolio_for_name(_portfolio.name)
             as_of = datetime.today()
             data = {
                 "id": _p.portfolio_id,
                 "name": _portfolio.name,
-                "cash": _p.wallet.cash_balance(as_of),
-                "invest": _p.wallet.invest_balance(as_of),
+                "cash": _p.cash_balance(as_of),
+                "invest": _p.invest_balance(as_of),
                 "value": _p.value(as_of),
-                "bank": _p.wallet.bank_balance(as_of),
+                "bank": _p.bank_balance(as_of),
             }
             return render_template("portfolio_detail.html", portfolio=data, as_of=as_of)
         return jsonify({"message": "Portfolio not found"}), 404
@@ -282,7 +282,7 @@ def get_position_lots(portfolio_id):
             "portfolio_id": l.portfolio_id,
             "product_id": l.product_id,
             "quantity": l.quantity,
-            "purchaseprice": l.purchasprice,
+            "purchaseprice": l.purchaseprice,
             "purchasedate": l.purchasedate,
         }
         for l in lots

@@ -1,12 +1,15 @@
-import datetime
 import json
+from datetime import datetime, timedelta
+from turtle import st
 
-import psycopg2
 import requests
-import update_eod_data
 import yfinance as yf
 from bs4 import BeautifulSoup, Tag
+from sqlalchemy import text
+
+import update_eod_data
 from constants import DATABASE_URL, INDEX_SYMBOLS
+from database import Session
 
 HTML_PARSER = "html.parser"
 WIKIPEDIA_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
@@ -176,93 +179,72 @@ def fetch_crypto_info(coin_id):
 
 def insert_product_into_db(product_info, active=True):
     """Insert product information into the PostgreSQL database."""
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
+    with Session() as session:
         # Insert into the database, avoiding duplicates
         info_data = json.loads(product_info["info"])
-        cur.execute(
+        statement = text(
             """
-            INSERT INTO Products (Symbol, CompanyName, Sector, Market, IsActive, dividend_rate, info, createddate)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (Symbol) do update set IsActive = EXCLUDED.IsActive, dividend_rate=EXCLUDED.dividend_rate, info=EXCLUDED.info;
-        """,
-            (
-                product_info["symbol"],
-                product_info["company_name"],
-                product_info["sector"],
-                product_info["market"],
-                active,
-                info_data["dividendRate"] if "dividendRate" in info_data else None,
-                product_info["info"],
-                datetime.datetime.today(),
-            ),
+        INSERT INTO Products (Symbol, CompanyName, Sector, Market, IsActive, dividend_rate, info, createddate)
+        VALUES (:symbol, :company_name, :sector, :market, :is_active, :dividend_rate, :info, :createddate)
+        ON CONFLICT (Symbol) do update set IsActive = EXCLUDED.IsActive, dividend_rate=EXCLUDED.dividend_rate, info=EXCLUDED.info;
+        """
         )
-        conn.commit()
-        cur.close()
+        session.execute(
+            statement,
+            {
+                "symbol": product_info["symbol"],
+                "company_name": product_info["company_name"],
+                "sector": product_info["sector"],
+                "market": product_info["market"],
+                "is_active": active,
+                "dividend_rate": (
+                    info_data["dividendRate"] if "dividendRate" in info_data else None
+                ),
+                "info": product_info["info"],
+                "createddate": datetime.today(),
+            },
+        )
+        session.commit()
         print(f"Inserted {product_info['symbol']} into the database.")
-    except psycopg2.DatabaseError as error:
-        print(error)
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def insert_crypto_into_db(coins, active=True):
     """Insert product information into the PostgreSQL database."""
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
+    with Session() as session:
         for coin in coins:
-            cur.execute(
+            statement = text(
                 """
-                INSERT INTO Products (Symbol, CompanyName, Sector, Market, IsActive, createddate, info)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (Symbol) do update set IsActive = EXCLUDED.IsActive;
-            """,
-                (
-                    coin["symbol"],
-                    coin["company_name"],
-                    coin["sector"],
-                    coin["market"],
-                    active,
-                    datetime.datetime.today(),
-                    coin["info"],
-                ),
+                INSERT INTO Products (Symbol, CompanyName, Sector, Market, IsActive, info, createddate)
+                VALUES (:symbol, :company_name, :sector, :market, :is_active, :info, :createddate)
+                ON CONFLICT (Symbol) do update set IsActive = EXCLUDED.IsActive, info=EXCLUDED.info;
+            """
             )
+            session.execute(
+                statement,
+                {
+                    "symbol": coin["symbol"],
+                    "company_name": coin["company_name"],
+                    "sector": coin["sector"],
+                    "market": coin["market"],
+                    "is_active": active,
+                    "info": coin["info"],
+                    "createddate": datetime.today(),
+                },
+            )
+            session.commit()
             print(f"Inserted {coin['symbol']} into the database.")
-        conn.commit()
-        cur.close()
-
-    except psycopg2.DatabaseError as error:
-        print(error)
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 # get the the row from the products table corresponding to the symbol
 def get_product(symbol):
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute(
+    with Session() as session:
+        statement = text(
             """
-            SELECT * FROM Products WHERE Symbol = %s
-        """,
-            (symbol,),
+            SELECT * FROM Products WHERE Symbol = :symbol
+        """
         )
-        product = cur.fetchone()
-        cur.close()
+        product = session.execute(statement, {"symbol": symbol}).first()
         return product
-    except psycopg2.DatabaseError as error:
-        print(error)
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def download_products():
@@ -288,8 +270,7 @@ def download_products():
         product = get_product(symbol)
         if (
             product
-            and product[6].date()
-            >= (datetime.datetime.today() - datetime.timedelta(days=5)).date()
+            and product[6].date() >= (datetime.today() - timedelta(days=5)).date()
         ):
             continue
         product_info = fetch_stock_info(symbol)
@@ -300,8 +281,7 @@ def download_products():
         product = get_product(symbol)
         if (
             product
-            and product[6].date()
-            >= (datetime.datetime.today() - datetime.timedelta(days=5)).date()
+            and product[6].date() >= (datetime.today() - timedelta(days=5)).date()
         ):
             continue
         product_info = fetch_stock_info(index)

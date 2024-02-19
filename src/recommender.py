@@ -3,8 +3,11 @@ from decimal import Decimal
 from types import NoneType
 from typing import Union
 
+from sqlalchemy import text
+
 from analyzer import ProductAnalyzer
 from constants import BUY, HOLD, SELL
+from database import Session
 from market import Market
 from numpy import mean
 from product import Product
@@ -29,6 +32,8 @@ class Recommendation:
         self.info = info
         self.as_of = None
 
+    def __repr__(self):
+        return f"Recommendation({self.symbol}:{self.symbol} strategy={self.strategy}, strength={self.strength})"
 
 class Action(Recommendation):
     def __init__(
@@ -63,20 +68,18 @@ STRATEGIES = [
 class Recommender:
     def __init__(
         self,
-        connection,
         portfolio_id: int,
         product: Product,
         end_date,
         strategy="advanced",
     ) -> None:
         self.strategy = strategy
-        self.connection = connection
         self.portfolio_id = portfolio_id
         self.end_date = end_date
         self.product = product
-        self.analyzer = ProductAnalyzer(self.connection, self.product, end_date)
+        self.analyzer = ProductAnalyzer(self.product, end_date)
         self.data_cache = CACHE
-        self.data_cache.load_data(self.connection, self.product.product_id)
+        self.data_cache.load_data(self.product.id)
 
     def _make_recommendation(
         self, action: str, strategy: str, strength: Decimal, info=None
@@ -165,19 +168,25 @@ class Recommender:
         """
         strategy = "mean_reversion"
         try:
-            with self.connection.cursor() as cur:
+            with Session() as session:
                 # Fetch the closing prices for the specified period ending on the target date
-                cur.execute(
+                statement = text(
                     """
                     SELECT ClosingPrice
                     FROM MarketData
-                    WHERE ProductID = %s AND Date <= %s
+                    WHERE ProductID = :product_id AND Date <= :end_date
                     ORDER BY Date DESC
-                    LIMIT %s;
-                """,
-                    (self.product.product_id, self.end_date, period),
+                    LIMIT :period;
+                """
                 )
-                prices = cur.fetchall()
+                prices = session.execute(
+                    statement,
+                    {
+                        "product_id": self.product.id,
+                        "end_date": self.end_date,
+                        "period": period,
+                    },
+                ).fetchall()
 
                 if len(prices) < period:
                     return self._make_recommendation(HOLD, strategy, Decimal(0))
@@ -216,9 +225,7 @@ class Recommender:
         try:
             start_date = self.end_date - timedelta(days=long_span * 3)
             # Fetch historical closing prices up to the target date
-            df = self.data_cache.get_data(
-                self.product.product_id, start_date, self.end_date
-            )
+            df = self.data_cache.get_data(self.product.id, start_date, self.end_date)
 
             # Ensure there's enough data
             if df.empty or len(df) < long_span:
@@ -360,31 +367,38 @@ class Recommender:
         Parameters:
         - recommendations: A list of dicts, each dict containing 'symbol', 'action', 'last', and 'vwap'.
         """
-        with self.connection.cursor() as cur:
+        with Session() as session:
             try:
                 for rec in recommendations:
-                    product = Product.from_symbol(self.connection, rec.symbol)
+                    product = Product.from_symbol(rec.symbol)
+                    if product is None:
+                        raise ValueError(
+                            f"Product with symbol {rec.symbol} not found in the database."
+                        )
                     # Insert the recommendation, skip if already exists for today
-                    cur.execute(
+                    statement = text(
                         """
                         INSERT INTO TradingRecommendations (PortfolioID, ProductID, RecommendationDate, Action)
-                        VALUES (%s, %s, %s, %s)
+                        VALUES (:portfolio_id, :product_id, :recommendation_date, :action)
                         ON CONFLICT (PortfolioID, ProductID) do update set RecommendationDate = EXCLUDED.RecommendationDate, Action = EXCLUDED.Action;
-                    """,
-                        (
-                            self.portfolio_id,
-                            product.product_id,
-                            rec.as_of,
-                            rec.action,
-                        ),
+                    """
                     )
-                self.connection.commit()
+                    session.execute(
+                        statement,
+                        {
+                            "portfolio_id": self.portfolio_id,
+                            "product_id": product.id,
+                            "recommendation_date": rec.as_of,
+                            "action": rec.action,
+                        },
+                    )
+                    session.commit()
             except Exception as e:
                 print(f"(E05) Error inserting recommendation for {rec.symbol}: {e}")
-                self.connection.rollback()
+                session.rollback()
 
     def upmacd_downmr(self):
-        market = Market(self.connection, self.end_date)
+        market = Market(self.end_date)
         if market.adline():
             rec = self.mean_reversion(period=200)
         else:
@@ -393,8 +407,8 @@ class Recommender:
         return rec
 
     def advanced_recommendation(self):
-        analyzer = ProductAnalyzer(self.connection, self.product, self.end_date)
-        market = Market(self.connection, self.end_date)
+        analyzer = ProductAnalyzer(self.product, self.end_date)
+        market = Market(self.end_date)
         score = 0
 
         adline = market.adline()

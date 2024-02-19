@@ -1,4 +1,6 @@
 import pandas as pd
+from sqlalchemy import text
+from database import Session
 
 
 class MarketDataCache:
@@ -10,19 +12,21 @@ class MarketDataCache:
     def set_earliest_date(self, earliest_date):
         self.earliest_date = earliest_date
 
-    def load_data(self, connection, product_id):
+    def load_data(self, product_id):
         """
         Load and cache data for the given product_id starting from the earliest_date.
         """
-        if product_id not in self.cache:
-            query = """
-                SELECT Date, ClosingPrice
-                FROM MarketData
-                WHERE ProductID = %s AND Date >= %s
-                ORDER BY Date ASC;
-            """
-            df = pd.read_sql(query, connection, params=(product_id, self.earliest_date))
-            self.cache[product_id] = df
+        with Session() as session:
+            if product_id not in self.cache:
+                query = """
+                    SELECT Date, ClosingPrice
+                    FROM MarketData
+                    WHERE ProductID = :product_id AND Date >= :after_date
+                    ORDER BY Date ASC;
+                """
+                statement = text(query)
+                df = pd.read_sql(statement, session.bind, params={"product_id":product_id, "after_date": self.earliest_date})  # type: ignore
+                self.cache[product_id] = df
         # Else: Data for this product_id is already loaded
 
     def get_data(self, product_id, start_date, end_date):

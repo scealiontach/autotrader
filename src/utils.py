@@ -2,14 +2,7 @@ from decimal import Decimal
 from functools import lru_cache
 from math import ceil
 
-import psycopg2
-
 from constants import DATABASE_URL
-
-
-@lru_cache(maxsize=None)  # Adjust maxsize as needed
-def get_database_connection():
-    return psycopg2.connect(DATABASE_URL)
 
 
 def round_down(n, d=4) -> Decimal:

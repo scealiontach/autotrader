@@ -6,6 +6,9 @@ import sys
 import time
 import warnings
 from decimal import Decimal
+
+from sqlalchemy import text
+from database import Session
 import psutil
 
 from pyinstrument import Profiler
@@ -16,7 +19,7 @@ from market_data_cache import CACHE
 from portfolio import Portfolio, portfolio_for_name
 from recommender import STRATEGIES, Action, Recommendation
 from reporting import csv_log
-from utils import get_database_connection, round_down
+from utils import round_down
 
 warnings.filterwarnings("ignore")
 
@@ -57,7 +60,7 @@ def make_plan(portfolio: Portfolio, recommendations: list, trade_date) -> list[A
         list: A list of actions to execute
     """
     portfolio_value = portfolio.value(trade_date)
-    cash = portfolio.wallet.cash_balance(trade_date)
+    cash = portfolio.cash_balance(trade_date)
     reserve_cash = (portfolio.reserve_cash_percent / 100) * (cash + portfolio_value)
     max_exposure_percentage = portfolio.max_exposure
 
@@ -220,7 +223,7 @@ def _process_buy_recommendations(
         if rec.last is None:
             continue
 
-        if product.sector in ("Cryptocurrency"):
+        if product and product.sector and product.sector in ("Cryptocurrency"):
             min_shares = 0.01
             min_reinvest_shares = 0.0001
         else:
@@ -255,56 +258,97 @@ def _process_buy_recommendations(
     return actions
 
 
-def get_trading_dates(connection, max_days=1460):
-    with connection.cursor() as cur:
-        cur.execute(
+def get_trading_dates(max_days=1460):
+    with Session() as session:
+        statement = text(
             """
             SELECT DISTINCT m.Date FROM MarketData m, products p
-            where m.Date > date(now()) - %s and p.ProductID = m.ProductID
+            where m.Date > date(now()) - :max_days and p.ProductID = m.ProductID
             and p.sector not in ('Cryptocurrency')
             ORDER BY m.Date
-            """,
-            (max_days,),
+            """
         )
-        return [row[0] for row in cur.fetchall()]
+        result = session.execute(statement, {"max_days": max_days}).fetchall()
+        return [row[0] for row in result]
 
 
 def reset_portfolio(portfolio: Portfolio):
-    with portfolio.connection.cursor() as cur:
-        cur.execute(
-            "DELETE FROM PortfolioPositions where portfolioid = %s",
-            (portfolio.portfolio_id,),
+    with Session() as session:
+        del_portfoliopositions = text(
+            """
+            DELETE FROM PortfolioPositions where PortfolioID = :portfolio_id
+            """
         )
-        cur.execute(
-            "DELETE FROM Transactions where portfolioid = %s", (portfolio.portfolio_id,)
+        del_transactions = text(
+            """
+            DELETE FROM Transactions where PortfolioID = :portfolio_id
+            """
         )
-        cur.execute(
-            "DELETE FROM CashTransactions where portfolioid = %s",
-            (portfolio.portfolio_id,),
+        del_cashtransactions = text(
+            """
+            DELETE FROM CashTransactions where PortfolioID = :portfolio_id
+            """
         )
-        cur.execute(
-            "DELETE FROM TradingRecommendations where portfolioid = %s",
-            (portfolio.portfolio_id,),
+        del_tradingrecommendations = text(
+            """
+            DELETE FROM TradingRecommendations where PortfolioID = :portfolio_id
+            """
         )
-        cur.execute(
-            "DELETE FROM Lots where portfolioid = %s", (portfolio.portfolio_id,)
+        del_lots = text(
+            """
+            DELETE FROM Lots where PortfolioID = :portfolio_id
+            """
         )
-        portfolio.connection.commit()
+        session.execute(
+            del_portfoliopositions, {"portfolio_id": portfolio.portfolio_id}
+        )
+        session.execute(del_transactions, {"portfolio_id": portfolio.portfolio_id})
+        session.execute(del_cashtransactions, {"portfolio_id": portfolio.portfolio_id})
+        session.execute(
+            del_tradingrecommendations, {"portfolio_id": portfolio.portfolio_id}
+        )
+        session.execute(del_lots, {"portfolio_id": portfolio.portfolio_id})
+
+        session.commit()
 
 
 def reset_all_portfolios():
-    connection = get_database_connection()
-    with connection.cursor() as cur:
-        cur.execute("DELETE FROM PortfolioPositions")
-        cur.execute("DELETE FROM Transactions")
-        cur.execute("DELETE FROM CashTransactions")
-        cur.execute("DELETE FROM TradingRecommendations")
-        cur.execute("DELETE FROM Lots")
-        connection.commit()
+    with Session() as session:
+        del_portfoliopositions = text(
+            """
+            DELETE FROM PortfolioPositions
+            """
+        )
+        del_transactions = text(
+            """
+            DELETE FROM Transactions
+            """
+        )
+        del_cashtransactions = text(
+            """
+            DELETE FROM CashTransactions
+            """
+        )
+        del_tradingrecommendations = text(
+            """
+            DELETE FROM TradingRecommendations
+            """
+        )
+        del_lots = text(
+            """
+            DELETE FROM Lots
+            """
+        )
+        session.execute(del_portfoliopositions)
+        session.execute(del_transactions)
+        session.execute(del_cashtransactions)
+        session.execute(del_tradingrecommendations)
+        session.execute(del_lots)
+        session.commit()
 
 
 def exercise_strategy(portfolio: Portfolio, report=True):
-    trading_dates = get_trading_dates(portfolio.connection)
+    trading_dates = get_trading_dates()
     if len(trading_dates) <= 0:
         return Decimal(0)
 
@@ -317,10 +361,10 @@ def exercise_strategy(portfolio: Portfolio, report=True):
         first_date = run_day(portfolio, trade_date, report=report)
 
     # profiler.print()
-    banked_cash = portfolio.wallet.bank_balance(last_trade_date)
-    total_invested = portfolio.wallet.invest_balance(last_trade_date)
+    banked_cash = portfolio.bank_balance(last_trade_date)
+    total_invested = portfolio.invest_balance(last_trade_date)
     total_value = portfolio.value(last_trade_date)
-    cash = portfolio.wallet.cash_balance(last_trade_date)
+    cash = portfolio.cash_balance(last_trade_date)
     roi = ((banked_cash + total_value + cash - total_invested) / total_invested) * 100
     if report:
         portfolio.report_status(last_trade_date, roi, first_date, report=report)
@@ -328,7 +372,6 @@ def exercise_strategy(portfolio: Portfolio, report=True):
 
 
 def run_day(portfolio: Portfolio, trade_date, execute=True, report=True):
-    wallet = portfolio.wallet
     recommendations = make_recommendations(portfolio, trade_date)
     planned_actions = make_plan(portfolio, recommendations, trade_date)
 
@@ -340,13 +383,13 @@ def run_day(portfolio: Portfolio, trade_date, execute=True, report=True):
     portfolio.reinvest_or_bank(trade_date, report=report)
 
     total_value = portfolio.value(trade_date)
-    cash = wallet.cash_balance(trade_date)
-    banked_cash = wallet.bank_balance(trade_date)
-    total_invested = wallet.invest_balance(trade_date)
+    cash = portfolio.cash_balance(trade_date)
+    banked_cash = portfolio.bank_balance(trade_date)
+    total_invested = portfolio.invest_balance(trade_date)
     complete_roi = (
         cumulative_return(total_invested, banked_cash + total_value + cash) * 100
     )
-    first_date = wallet.first_transaction_like("%Reinvest/Bank%")
+    first_date = portfolio.first_transaction_like("%Reinvest/Bank%")
     portfolio.report_status(trade_date, complete_roi, first_date, report=report)
     return first_date
 
@@ -370,7 +413,7 @@ def execute_plan(
             report=report,
         )
         portfolio._execute_trade(
-            product.product_id,
+            product.id,
             action.action,
             action.shares,
             action.last,
@@ -385,7 +428,7 @@ RESERVE_CASH_RANGE = [1]
 REINVEST_AMT_RANGE = [100]
 BANK_THRESHOLD = [1000]
 WITH_CRYPTO = ["only", "no"]
-MAX_EXPOSURE = [100]
+MAX_EXPOSURE = [75]
 
 # LOCAL_STRATEGIES = ["vwap", "sma_rsi","buy_sma_sell_rsi"]
 LOCAL_STRATEGIES = STRATEGIES
@@ -416,7 +459,6 @@ def parameter_search():
     max_processes = psutil.cpu_count(logical=False) or 1
     max_processes = max_processes - 1
     max_processes = max(max_processes, 1)
-
     pipes = []
     for combination in initial_combinations:
         name = f"Parameter Search {combination}"
@@ -424,7 +466,7 @@ def parameter_search():
         print(f"Testing parameters {combination}")
 
         initial_wallet = Decimal(combination[1])
-        portfolio.wallet.invest(
+        portfolio.invest(
             initial_wallet, "1975-04-24", INITIAL_DEPOSIT_DESCRIPTION, report=False
         )
 
@@ -497,7 +539,7 @@ def main():
 
         if len(sys.argv) >= 9:
             portfolio_id = int(sys.argv[8])
-            portfolio = Portfolio(portfolio_id, get_database_connection())
+            portfolio = Portfolio(portfolio_id)
         else:
             portfolio = portfolio_for_name("main")
 
@@ -527,7 +569,7 @@ def main():
             strategy=strategy,
         )
 
-        portfolio.wallet.invest(
+        portfolio.invest(
             initial_wallet, "1975-04-24", INITIAL_DEPOSIT_DESCRIPTION, report=False
         )
         exercise_strategy(portfolio, report=False)

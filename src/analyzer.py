@@ -2,6 +2,9 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Union
 
+from sqlalchemy import text
+from database import Session
+
 from product import Product
 
 
@@ -22,8 +25,7 @@ def cumulative_return(initial_value: Decimal, final_value: Decimal) -> Decimal:
 
 class ProductAnalyzer:
 
-    def __init__(self, connection, product: Product, end_date) -> None:
-        self.connection = connection
+    def __init__(self, product: Product, end_date) -> None:
         self.product = product
         self.end_date = end_date
 
@@ -45,22 +47,28 @@ class ProductAnalyzer:
         :return: The SMA value as a float, or None if insufficient data is available.
         """
         try:
-            with self.connection.cursor() as cur:
+            with Session() as session:
                 # Query to select the last 'period' closing prices before the end_date, then calculate average
-                cur.execute(
+                statement = text(
                     """
                     WITH OrderedPrices AS (
                         SELECT ClosingPrice
                         FROM MarketData
-                        WHERE ProductID = %s AND Date <= %s
+                        WHERE ProductID = :product_id AND Date <= :end_date
                         ORDER BY Date DESC
-                        LIMIT %s
+                        LIMIT :period
                     )
                     SELECT AVG(ClosingPrice) FROM OrderedPrices;
-                """,
-                    (self.product.product_id, self.end_date, period),
+                """
                 )
-                result = cur.fetchone()
+                result = session.execute(
+                    statement,
+                    {
+                        "product_id": self.product.id,
+                        "end_date": self.end_date,
+                        "period": period,
+                    },
+                ).first()
                 if result and result[0] is not None:
                     return result[0]
                 else:
@@ -79,18 +87,23 @@ class ProductAnalyzer:
         """
         start_date = self.end_date - timedelta(days=window)
         vwap = None
-        with self.connection.cursor() as cur:
-            cur.execute(
+        with Session() as session:
+            statement = text(
                 """
                 SELECT SUM(ClosingPrice * Volume) / SUM(Volume) AS VWAP
                 FROM MarketData
                 JOIN Products ON MarketData.ProductID = Products.ProductID
-                WHERE Symbol = %s AND Date BETWEEN %s AND %s
-            """,
-                (self.product.symbol, start_date, self.end_date),
+                WHERE Symbol = :symbol AND Date BETWEEN :start_date AND :end_date
+            """
             )
-
-            result = cur.fetchone()
+            result = session.execute(
+                statement,
+                {
+                    "symbol": self.product.symbol,
+                    "start_date": start_date,
+                    "end_date": self.end_date,
+                },
+            ).first()
             if result:
                 vwap = result[0]
         return vwap
@@ -110,18 +123,25 @@ class ProductAnalyzer:
             )  # Fetch more days to ensure enough data
             end_date = self.end_date
 
-            with self.connection.cursor() as cur:
-                cur.execute(
+            with Session() as session:
+                statement = text(
                     """
                     SELECT Date, ClosingPrice
                     FROM MarketData
-                    WHERE ProductID = %s AND Date BETWEEN %s AND %s
+                    WHERE ProductID = :product_id AND Date BETWEEN :start_date AND :end_date
                     ORDER BY Date ASC;
-                """,
-                    (self.product.product_id, start_date, end_date),
+                """
                 )
+                rows = session.execute(
+                    statement,
+                    {
+                        "product_id": self.product.id,
+                        "start_date": start_date,
+                        "end_date": end_date,
+                    },
+                ).all()
 
-                prices: list[Decimal] = [row[1] for row in cur.fetchall()]
+                prices: list[Decimal] = [row[1] for row in rows]
 
                 # Ensure we have enough data points
                 if len(prices) < window + 1:
@@ -164,24 +184,24 @@ class ProductAnalyzer:
         :return: True if a Bearish Engulfing pattern is detected, False otherwise.
         """
         try:
-            with self.connection.cursor() as cur:
-                # Fetch the open, high, low, and close prices for the target date and the preceding day
-                cur.execute(
+            with Session() as session:
+                statement = text(
                     """
                     SELECT Date, OpeningPrice, ClosingPrice
                     FROM MarketData
-                    WHERE ProductID = %s AND Date <= %s
-                    AND Date >= %s
+                    WHERE ProductID = :product_id AND Date <= :to_date AND Date >= :from_date
                     ORDER BY Date DESC
                     LIMIT 2;
-                """,
-                    (
-                        self.product.product_id,
-                        self.end_date,
-                        self.end_date - timedelta(days=7),
-                    ),
+                """
                 )
-                rows = cur.fetchall()
+                rows = session.execute(
+                    statement,
+                    {
+                        "product_id": self.product.id,
+                        "to_date": self.end_date,
+                        "from_date": self.end_date - timedelta(days=7),
+                    },
+                ).all()
 
                 if len(rows) < 2:
                     return False  # Not enough data to determine the pattern

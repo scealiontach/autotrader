@@ -1,10 +1,13 @@
 import warnings
 from datetime import datetime, timedelta
 
-import psycopg2
 import requests
 import yfinance as yf
+from pasta.base.annotate import statement
+from sqlalchemy import text
+
 from constants import API_KEY, DATABASE_URL
+from database import Session
 
 warnings.filterwarnings("ignore")
 
@@ -12,40 +15,27 @@ warnings.filterwarnings("ignore")
 def fetch_products_from_db():
     """Fetch product symbols from the database."""
     products = []
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT ProductID, Symbol FROM Products where sector not in ('Cryptocurrency');"
+    with Session() as session:
+        statement = text(
+            """
+            SELECT ProductID, Symbol FROM Products where sector not in ('Cryptocurrency');
+            """
         )
-        products = cur.fetchall()
-        cur.close()
-    except Exception as error:
-        print(f"E1: {error}")
-    finally:
-        if conn is not None:
-            conn.close()
+        result = session.execute(statement)
+        products = result.fetchall()
     return products
 
 
 def fetch_crypto_from_db():
     """Fetch product symbols from the database."""
     products = []
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT ProductID, info FROM Products where sector in ('Cryptocurrency');"
+    with Session() as session:
+        statement = text(
+            """
+            SELECT ProductID, info FROM Products where sector in ('Cryptocurrency');
+            """
         )
-        products = cur.fetchall()
-        cur.close()
-    except Exception as error:
-        print(f"E2: {error}")
-    finally:
-        if conn is not None:
-            conn.close()
+        products = session.execute(statement).all()
     return products
 
 
@@ -118,30 +108,26 @@ def fetch_crypto_historical_data(crypto_id, vs_currency="usd", weeks=520):
 def insert_crypto_market_data_to_db(product_id, data):
     """Insert market data into the MarketData table."""
     conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-
+    with Session() as session:
         for entry in data:
-            cur.execute(
+            statement = text(
                 """
                 INSERT INTO MarketData (ProductID, Date, OpeningPrice, ClosingPrice, Volume)
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES (:product_id, :date, :openingprice, :closingprice, :volume)
                 ON CONFLICT (ProductID, Date) DO NOTHING;
-            """,
-                (
-                    product_id,
-                    entry["date"],
-                    entry["openingprice"],
-                    entry["closingprice"],
-                    entry["volume"],
-                ),
+            """
             )
-        conn.commit()
-        cur.close()
-    finally:
-        if conn is not None:
-            conn.close()
+            session.execute(
+                statement,
+                {
+                    "product_id": product_id,
+                    "date": entry["date"],
+                    "openingprice": entry["openingprice"],
+                    "closingprice": entry["closingprice"],
+                    "volume": entry["volume"],
+                },
+            )
+            session.commit()
 
 
 def update_eod_data(product_id, symbol):
@@ -169,9 +155,9 @@ def update_eod_data(product_id, symbol):
     stock = yf.Ticker(symbol)
     hist = stock.history(start=start_date, end=end_date)
 
-    with psycopg2.connect(DATABASE_URL) as conn:
+    with Session() as session:
         for index, row in hist.iterrows():
-            date = index.date()
+            date = index.date()  # type: ignore
             open_price = row["Open"]
             high_price = row["High"]
             low_price = row["Low"]
@@ -180,29 +166,31 @@ def update_eod_data(product_id, symbol):
 
             # Here you would insert or update the data in your database
             # Example insert statement (you need to adjust according to your schema):
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO MarketData (ProductId, Date, OpeningPrice, HighPrice, LowPrice, ClosingPrice, Volume)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ProductId, Date) DO UPDATE
-                    SET OpeningPrice = EXCLUDED.OpeningPrice,
-                        HighPrice = EXCLUDED.HighPrice,
-                        LowPrice = EXCLUDED.LowPrice,
-                        ClosingPrice = EXCLUDED.ClosingPrice,
-                        Volume = EXCLUDED.Volume;
-                """,
-                    (
-                        product_id,
-                        date,
-                        open_price,
-                        high_price,
-                        low_price,
-                        close_price,
-                        volume,
-                    ),
-                )
-                conn.commit()
+            statement = text(
+                """
+                INSERT INTO MarketData (ProductID, Date, OpeningPrice, HighPrice, LowPrice, ClosingPrice, Volume)
+                VALUES (:product_id, :date, :open_price, :high_price, :low_price, :close_price, :volume)
+                ON CONFLICT (ProductID, Date) DO UPDATE
+                SET OpeningPrice = EXCLUDED.OpeningPrice,
+                    HighPrice = EXCLUDED.HighPrice,
+                    LowPrice = EXCLUDED.LowPrice,
+                    ClosingPrice = EXCLUDED.ClosingPrice,
+                    Volume = EXCLUDED.Volume;
+            """
+            )
+            session.execute(
+                statement,
+                {
+                    "product_id": product_id,
+                    "date": date,
+                    "open_price": open_price,
+                    "high_price": high_price,
+                    "low_price": low_price,
+                    "close_price": close_price,
+                    "volume": volume,
+                },
+            )
+            session.commit()
 
 
 def compute_advance_decline_table():
@@ -233,38 +221,36 @@ def compute_advance_decline_table():
     """
 
     try:
-        with psycopg2.connect(DATABASE_URL) as connection:
-            with connection.cursor() as cur:
-                cur.execute(
-                    """
-                           DELETE from MarketMovement;
-                           """
-                )
-                cur.execute(query)
-                # Fetch and return the result
-                connection.commit()
+        with Session() as session:
+            statement = text(
+                """
+                             DELETE from MarketMovement;
+                             """
+            )
+            session.execute(statement)
+            statement = text(query)
+            session.execute(statement)
+            session.commit()
     except Exception as e:
         print(f"(E06) An error occurred: {e}")
 
 
 def get_last_recorded_date(product_id):
-    with psycopg2.connect(DATABASE_URL) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT MAX(Date) FROM MarketData WHERE ProductID = %s;
-            """,
-                (product_id,),
-            )
-            result = cur.fetchone()
-            if result and result[0]:
-                return result[0]
-            else:
-                return None
+    with Session() as session:
+        statement = text(
+            """
+            SELECT MAX(Date) FROM MarketData WHERE ProductID = :product_id;
+        """
+        )
+        result = session.execute(statement, {"product_id": product_id}).first()
+        if result and result[0]:
+            return result[0]
+        else:
+            return None
 
 
 def update():
-    products = fetch_products_from_db()
+    products = list(fetch_products_from_db())
     # sort products by symbol
     products.sort(key=lambda x: x[1])
     for product_id, symbol in products:

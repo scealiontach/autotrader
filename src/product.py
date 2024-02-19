@@ -1,87 +1,63 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
 from types import NoneType
-from typing import Union
+from typing import Optional, Union
+
+from sqlalchemy.orm import Mapped, mapped_column
 
 from cachetools import LFUCache
+from models import Base
+from sqlalchemy import DECIMAL, JSON, Boolean, Date, Integer, String, text
+
+from database import Session
 
 product_cache = LFUCache(maxsize=4096)
 
 
-class Product:
-    def __init__(
-        self,
-        connection,
-        product_id: Union[int, NoneType] = None,
-        symbol: Union[str, NoneType] = None,
-    ):
-        self.connection = connection
-        self.closing_cache_hits = 0
-        self.quantity_cache_hits = 0
-        self.symbol: str
-        if not product_id and not symbol:
-            raise ValueError("Either product_id or symbol must be provided")
-        if product_id:
-            self.product_id = product_id
-            self.refresh_by_product_id()
-        elif symbol:
-            self.symbol = symbol
-            self.refresh_by_symbol()
+class Product(Base):
+    __tablename__ = "products"
+    id: Mapped[int] = mapped_column("productid", Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(10), unique=True, nullable=False)
+    company_name: Mapped[Optional[str]] = mapped_column(
+        "companyname", String(255), unique=False, nullable=True
+    )
+    sector: Mapped[Optional[str]] = mapped_column(
+        String(255), unique=False, nullable=True
+    )
+    market: Mapped[Optional[str]] = mapped_column(
+        String(255), unique=False, nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(
+        "isactive", Boolean, unique=False, nullable=False, default=True
+    )
+    dividend_rate: Mapped[Optional[DECIMAL]] = mapped_column(
+        DECIMAL(10, 2), unique=False, nullable=True
+    )
+    info: Mapped[Optional[JSON]] = mapped_column(JSON, unique=False, nullable=True)
+    createddate: Mapped[Date] = mapped_column(
+        Date, unique=False, nullable=False, default=datetime.today
+    )
 
     @staticmethod
-    @lru_cache(maxsize=1024)
-    def from_id(connection, product_id: int):
-        return Product(connection, product_id=product_id)
+    def from_id(product_id: int):
+        with Session() as session:
+            product = session.query(Product).get(product_id)
+            if product is None:
+                raise ValueError(f"Product with ID {product_id} not found")
+            return product
 
     @staticmethod
-    @lru_cache(maxsize=1024)
-    def from_symbol(connection, symbol: str):
-        return Product(connection, symbol=symbol)
+    def from_symbol(symbol: str):
+        with Session() as session:
+            return session.query(Product).filter(Product.symbol == symbol).first()
 
     @staticmethod
-    def all_sectors(connection) -> list[str]:
-        with connection.cursor() as cur:
-            cur.execute("SELECT DISTINCT Sector FROM Products")
-            return [row[0] for row in cur.fetchall()]
-
-    def refresh_by_product_id(self):
-        with self.connection.cursor() as cur:
-            cur.execute(
-                """
-                SELECT Symbol, CompanyName, Sector, Market, IsActive, CreatedDate, Dividend_Rate, info, ProductId
-                from Products where ProductID = %s
-                """,
-                (self.product_id,),
-            )
-            result = cur.fetchone()
-            self.symbol = result[0]
-            self.company_name = result[1]
-            self.sector = result[2]
-            self.market = result[3]
-            self.is_active = result[4]
-            self.created_date = result[5]
-            self.dividend_rate = result[6]
-            self.info = result[7]
-
-    def refresh_by_symbol(self):
-        with self.connection.cursor() as cur:
-            cur.execute(
-                """
-                SELECT Symbol, CompanyName, Sector, Market, IsActive, CreatedDate, Dividend_Rate, info, ProductId
-                from Products where Symbol = %s
-                """,
-                (self.symbol,),
-            )
-            result = cur.fetchone()
-            self.company_name = result[1]
-            self.sector = result[2]
-            self.market = result[3]
-            self.is_active = result[4]
-            self.created_date = result[5]
-            self.dividend_rate = result[6]
-            self.info = result[7]
-            self.product_id = result[8]
+    def all_sectors() -> list[str]:
+        with Session() as session:
+            statement = text("SELECT DISTINCT Sector FROM Products")
+            result = session.execute(statement)
+            return [row[0] for row in result]
 
     def fetch_last_closing_price(self, as_of_date) -> Union[Decimal, NoneType]:
         """
@@ -91,24 +67,29 @@ class Product:
         :param as_of_date: The date before which to find the last closing price (datetime.date object).
         :return: The last closing price as a float, or None if not found.
         """
-        cache_key = f"{self.product_id}-closing-{as_of_date}"
+        cache_key = f"{self.id}-closing-{as_of_date}"
         if cache_key in product_cache:
-            self.closing_cache_hits += 1
             return product_cache[cache_key]
 
         closing_price = None
-        with self.connection.cursor() as cur:
-            cur.execute(
+        with Session() as session:
+            statement = text(
                 """
-                SELECT ClosingPrice
-                FROM MarketData
-                WHERE ProductID = %s AND Date > %s AND Date <= %s
-                ORDER BY Date DESC
-                LIMIT 1
-            """,
-                (self.product_id, as_of_date - timedelta(days=4), as_of_date),
+                            SELECT ClosingPrice
+                            FROM MarketData
+                            WHERE ProductID = :product_id AND Date > :from_date AND Date <= :to_date
+                            ORDER BY Date DESC
+                            LIMIT 1
+                            """
             )
-            result = cur.fetchone()
+            result = session.execute(
+                statement,
+                {
+                    "product_id": self.id,
+                    "from_date": as_of_date - timedelta(days=4),
+                    "to_date": as_of_date,
+                },
+            ).first()
             if result and result[0]:
                 closing_price = result[0]
         product_cache[cache_key] = closing_price
