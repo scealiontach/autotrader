@@ -1,17 +1,22 @@
 import itertools
 import math
+import os
+import subprocess
 import sys
+import time
 import warnings
-from datetime import date, timedelta
 from decimal import Decimal
+import psutil
+
+from pyinstrument import Profiler
 
 from analyzer import cumulative_return
 from constants import BUY, HOLD, REQUIRED_HOLDING_DAYS, SELL
 from market_data_cache import CACHE
-from portfolio import Portfolio, get_portfolios
-from recommender import Action, Recommendation
+from portfolio import Portfolio, portfolio_for_name
+from recommender import STRATEGIES, Action, Recommendation
 from reporting import csv_log
-from utils import round_down
+from utils import get_database_connection, round_down
 
 warnings.filterwarnings("ignore")
 
@@ -26,16 +31,12 @@ def make_recommendations(portfolio: Portfolio, as_of_eod) -> list[Recommendation
     recommendations = []
     positions = portfolio.positions()
 
-    market = portfolio.market_as_of(as_of_eod)
     last_recommender = None
     for position in positions:
         symbol = position["symbol"]
         recommender = portfolio.recommender_for(symbol, as_of_eod)
         last_recommender = recommender
-        if market.adline():
-            rec = recommender.mean_reversion(period=200)
-        else:
-            rec = recommender.macd()
+        rec = recommender.recommend()
         rec.as_of = as_of_eod
         recommendations.append(rec)
     if last_recommender:
@@ -132,7 +133,7 @@ def _process_hold_recommendations(
         product = portfolio.product_for(rec.symbol)
         last_price = product.fetch_last_closing_price(trade_date) or Decimal(0)
         position = portfolio.position_for(product.symbol)
-        current_quantity = product.fetch_current_quantity(trade_date)
+        current_quantity = position.fetch_current_quantity(trade_date)
         current_investment = current_quantity * last_price
 
         if rec.last is None:
@@ -178,13 +179,14 @@ def _process_sell_recommendations(
 
     for rec in sell_recommendations:
         symbol = rec.symbol
-        product = portfolio.product_for(symbol)
         position = portfolio.position_for(symbol)
-        current_quantity = product.fetch_current_quantity(trade_date)
+        current_quantity = position.fetch_current_quantity(trade_date)
         if rec.last is None:
+            print(f"Last price is None for {symbol}")
             continue
         if rec.action == SELL and current_quantity > 0:
             if not position.meets_holding_period(trade_date, REQUIRED_HOLDING_DAYS):
+                print(f"Position {symbol} does not meet holding period")
                 continue
             shares_to_sell = current_quantity
             if shares_to_sell > 0 and shares_to_sell <= current_quantity:
@@ -210,8 +212,9 @@ def _process_buy_recommendations(
 
     for rec in buy_recommendations:
         product = portfolio.product_for(rec.symbol)
+        position = portfolio.position_for(product.symbol)
         last_price = product.fetch_last_closing_price(trade_date) or 0
-        current_quantity = product.fetch_current_quantity(trade_date)
+        current_quantity = position.fetch_current_quantity(trade_date)
         current_investment = current_quantity * last_price
 
         if rec.last is None:
@@ -266,20 +269,41 @@ def get_trading_dates(connection, max_days=1460):
         return [row[0] for row in cur.fetchall()]
 
 
-def reset_data(connection):
+def reset_portfolio(portfolio: Portfolio):
+    with portfolio.connection.cursor() as cur:
+        cur.execute(
+            "DELETE FROM PortfolioPositions where portfolioid = %s",
+            (portfolio.portfolio_id,),
+        )
+        cur.execute(
+            "DELETE FROM Transactions where portfolioid = %s", (portfolio.portfolio_id,)
+        )
+        cur.execute(
+            "DELETE FROM CashTransactions where portfolioid = %s",
+            (portfolio.portfolio_id,),
+        )
+        cur.execute(
+            "DELETE FROM TradingRecommendations where portfolioid = %s",
+            (portfolio.portfolio_id,),
+        )
+        cur.execute(
+            "DELETE FROM Lots where portfolioid = %s", (portfolio.portfolio_id,)
+        )
+        portfolio.connection.commit()
+
+
+def reset_all_portfolios():
+    connection = get_database_connection()
     with connection.cursor() as cur:
         cur.execute("DELETE FROM PortfolioPositions")
         cur.execute("DELETE FROM Transactions")
         cur.execute("DELETE FROM CashTransactions")
         cur.execute("DELETE FROM TradingRecommendations")
-        cur.execute("DELETE FROM MarketMovement")
+        cur.execute("DELETE FROM Lots")
         connection.commit()
-    compute_advance_decline_table(connection)
 
 
-def exercise_strategy(portfolio: Portfolio, report=True, bank_pc=33):
-
-    wallet = portfolio.wallet
+def exercise_strategy(portfolio: Portfolio, report=True):
     trading_dates = get_trading_dates(portfolio.connection)
     if len(trading_dates) <= 0:
         return Decimal(0)
@@ -287,41 +311,49 @@ def exercise_strategy(portfolio: Portfolio, report=True, bank_pc=33):
     cache = CACHE
     cache.set_earliest_date(trading_dates[0])
 
-    first_date = trading_dates[0]
-    last_reinvestment_date = trading_dates[0]
-    print(f"First Date: {first_date}")
     # with Profiler(interval=0.001) as profiler:
     for trade_date in trading_dates:
         last_trade_date = trade_date
-        recommendations = make_recommendations(portfolio, trade_date)
-        planned_actions = make_plan(portfolio, recommendations, trade_date)
-
-        execute_plan(portfolio, trade_date, planned_actions)
-        portfolio.update_positions(trade_date)
-
-        last_reinvestment_date = reinvest_or_bank(
-            bank_pc, portfolio, last_reinvestment_date, trade_date
-        )
-
-        total_value = portfolio.value(trade_date)
-        cash = wallet.cash_balance(trade_date)
-        banked_cash = wallet.bank_balance(trade_date)
-        total_invested = wallet.invest_balance(trade_date)
-        complete_roi = (
-            cumulative_return(total_invested, banked_cash + total_value + cash) * 100
-        )
-        portfolio.report_status(trade_date, complete_roi, first_date)
+        first_date = run_day(portfolio, trade_date, report=report)
 
     # profiler.print()
+    banked_cash = portfolio.wallet.bank_balance(last_trade_date)
+    total_invested = portfolio.wallet.invest_balance(last_trade_date)
     total_value = portfolio.value(last_trade_date)
     cash = portfolio.wallet.cash_balance(last_trade_date)
     roi = ((banked_cash + total_value + cash - total_invested) / total_invested) * 100
     if report:
-        portfolio.report_status(last_trade_date, roi, first_date)
+        portfolio.report_status(last_trade_date, roi, first_date, report=report)
     return roi
 
 
-def execute_plan(portfolio: Portfolio, trade_date, planned_actions: list[Action]):
+def run_day(portfolio: Portfolio, trade_date, execute=True, report=True):
+    wallet = portfolio.wallet
+    recommendations = make_recommendations(portfolio, trade_date)
+    planned_actions = make_plan(portfolio, recommendations, trade_date)
+
+    if execute:
+        execute_plan(portfolio, trade_date, planned_actions, report=report)
+
+    portfolio.update_positions(trade_date)
+
+    portfolio.reinvest_or_bank(trade_date, report=report)
+
+    total_value = portfolio.value(trade_date)
+    cash = wallet.cash_balance(trade_date)
+    banked_cash = wallet.bank_balance(trade_date)
+    total_invested = wallet.invest_balance(trade_date)
+    complete_roi = (
+        cumulative_return(total_invested, banked_cash + total_value + cash) * 100
+    )
+    first_date = wallet.first_transaction_like("%Reinvest/Bank%")
+    portfolio.report_status(trade_date, complete_roi, first_date, report=report)
+    return first_date
+
+
+def execute_plan(
+    portfolio: Portfolio, trade_date, planned_actions: list[Action], report=True
+):
     for action in planned_actions:
         product = portfolio.product_for(action.symbol)
         csv_log(
@@ -335,6 +367,7 @@ def execute_plan(portfolio: Portfolio, trade_date, planned_actions: list[Action]
                 action.shares,
                 action.last,
             ],
+            report=report,
         )
         portfolio._execute_trade(
             product.product_id,
@@ -342,173 +375,102 @@ def execute_plan(portfolio: Portfolio, trade_date, planned_actions: list[Action]
             action.shares,
             action.last,
             trade_date,
+            report=report,
         )
 
 
-def reinvest_or_bank(bank_pc, portfolio: Portfolio, last_reinvestment_date, trade_date):
-    total_value = portfolio.value(trade_date)
-    wallet = portfolio.wallet
-    cash = wallet.cash_balance(trade_date)
-    total_invested = wallet.invest_balance(trade_date)
-    banking_roi = cumulative_return(total_invested, total_value + cash) * 100
-    if trade_date > (
-        last_reinvestment_date + timedelta(days=portfolio.reinvest_period)
-    ):
-        withdrawal = portfolio.take_profit(bank_pc, cash, banking_roi)
-        wallet.sweep(
-            withdrawal,
-            portfolio.reinvest_amt,
-            trade_date,
-            f"Reinvest/Bank @ {banking_roi:.2f}% ROI",
-        )
-        return trade_date
-    else:
-        return last_reinvestment_date
-
-
-INITIAL_WALLET_RANGE = [0, 1000]
-REINVEST_PERIOD_RANGE = [7, 15, 30]
-RESERVE_CASH_RANGE = [2]
+INITIAL_WALLET_RANGE = [1200]
+REINVEST_PERIOD_RANGE = [3650]
+RESERVE_CASH_RANGE = [1]
 REINVEST_AMT_RANGE = [100]
-BANK_THRESHOLD = [100, 200, 1000]
-WITH_CRYPTO = ["yes", "no", "only"]
+BANK_THRESHOLD = [1000]
+WITH_CRYPTO = ["only", "no"]
+MAX_EXPOSURE = [100]
+
+# LOCAL_STRATEGIES = ["vwap", "sma_rsi","buy_sma_sell_rsi"]
+LOCAL_STRATEGIES = STRATEGIES
 
 
 def parameter_search():
+    reset_all_portfolios()
+
     # with Profiler(interval=0.1) as profiler:
     print("Executing parameter search")
-    param_combinations = itertools.product(
+    initial_combinations = itertools.product(
         RESERVE_CASH_RANGE,
         INITIAL_WALLET_RANGE,
         REINVEST_PERIOD_RANGE,
         REINVEST_AMT_RANGE,
         BANK_THRESHOLD,
         WITH_CRYPTO,
+        MAX_EXPOSURE,
+        LOCAL_STRATEGIES,
     )
 
-    optimals = []
-    portfolio = get_portfolios()[0]
-    for combination in param_combinations:
-        print(f"Testing parameters {combination}")
-        initialize(portfolio.connection)
+    initial_combinations = list(initial_combinations)
+    for combination in initial_combinations:
+        name = f"Parameter Search {combination}"
+        portfolio = portfolio_for_name(name)
+        initialize_portfolio(portfolio)
 
-        reserve_cash_percent = Decimal(combination[0])
+    max_processes = psutil.cpu_count(logical=False) or 1
+    max_processes = max_processes - 1
+    max_processes = max(max_processes, 1)
+
+    pipes = []
+    for combination in initial_combinations:
+        name = f"Parameter Search {combination}"
+        portfolio = portfolio_for_name(name)
+        print(f"Testing parameters {combination}")
+
         initial_wallet = Decimal(combination[1])
-        reinvest_period = combination[2]
-        reinvest_amt = Decimal(combination[3])
-        bank_threshold = combination[4]
+        portfolio.wallet.invest(
+            initial_wallet, "1975-04-24", INITIAL_DEPOSIT_DESCRIPTION, report=False
+        )
+
         if combination[5] == "no":
             portfolio.set_options(sectors_forbidden=["Cryptocurrency"])
         elif combination[5] == "only":  # only crypto
             portfolio.set_options(sectors_allowed=["Cryptocurrency"])
 
         portfolio.set_options(
-            reserve_cash_percent=reserve_cash_percent,
-            reinvest_period=reinvest_period,
-            reinvest_amt=reinvest_amt,
-            bank_threshold=bank_threshold,
-            # sectors_forbidden=["Cryptocurrency"],
+            reserve_cash_percent=Decimal(combination[0]),
+            reinvest_period=combination[2],
+            reinvest_amt=Decimal(combination[3]),
+            bank_threshold=combination[4],
+            max_exposure=combination[6],
+            strategy=combination[7],
         )
 
-        portfolio.wallet.invest(
-            initial_wallet, "1975-04-24", INITIAL_DEPOSIT_DESCRIPTION
+        pipe = subprocess.Popen(
+            [
+                sys.executable,
+                __file__,
+                str(portfolio.reserve_cash_percent),
+                str(initial_wallet),
+                str(portfolio.reinvest_period),
+                str(portfolio.reinvest_amt),
+                str(portfolio.bank_threshold),
+                combination[5],
+                str(portfolio.max_exposure),
+                str(portfolio.portfolio_id),
+                str(portfolio.strategy),
+            ]
         )
-        result = exercise_strategy(
-            portfolio,
-            report=False,
-        )
+        pipes.append(pipe)
 
-        cash = portfolio.wallet.cash_balance(date.today())
-        portfolio_value = portfolio.value(date.today())
-        total_invested = portfolio.wallet.invest_balance(date.today())
-        bank = portfolio.wallet.bank_balance(date.today())
-        total = cash + portfolio_value + bank
-
-        optimals.append(
-            {
-                "combination": {
-                    "reserve_cash_percent": Decimal(combination[0]),
-                    "initial_wallet": combination[1],
-                    "reinvest_period": combination[2],
-                    "reinvest_amt": Decimal(combination[3]),
-                    "bank_threshold": combination[4],
-                    "crypto": combination[5],
-                },
-                "roi": result,
-                "invested": total_invested,
-                "total": total,
-            }
-        )
-
-    initialize(portfolio.connection)
-
-    for result in optimals:
-        params = result["combination"]
-        roi = result["roi"]
-        invested = result["invested"]
-        total = result["total"]
-        print(f"RESULT params={params}, roi={roi}, invested={invested}, total={total}")
-
-    if len(optimals) > 0:
-        optimals.sort(key=lambda x: x["roi"], reverse=True)
-        result = optimals[0]
-        params = result["combination"]
-        roi = result["roi"]
-        invested = result["invested"]
-        total = result["total"]
-        print(
-            f"OPTIMAL BY ROI params={params}, roi={roi}, invested={invested}, total={total}"
-        )
-
-        optimals.sort(key=lambda x: x["total"], reverse=True)
-        result = optimals[0]
-        params = result["combination"]
-        roi = result["roi"]
-        invested = result["invested"]
-        total = result["total"]
-        print(
-            f"OPTIMAL BY TOTAL params={params}, roi={roi}, invested={invested}, total={total}"
-        )
+        while len(pipes) >= max_processes:
+            for p in pipes:
+                exit_code = p.poll()
+                if exit_code is not None:
+                    pipes.remove(p)
+            time.sleep(0.5)
+    for p in pipes:
+        p.wait()
 
 
-def compute_advance_decline_table(connection):
-    """
-    Compute a table showing the date, the number of products that have advanced,
-    and the number that have declined since the previous trading day.
-    """
-    query = """
-    WITH RankedPrices AS (
-        SELECT
-            Date,
-            ProductID,
-            ClosingPrice,
-            LAG(ClosingPrice) OVER (PARTITION BY ProductID ORDER BY Date) AS PreviousClosingPrice
-        FROM MarketData
-    ),
-    DailyChanges AS (
-        SELECT
-            Date,
-            SUM(CASE WHEN ClosingPrice > PreviousClosingPrice THEN 1 ELSE 0 END) AS Advanced,
-            SUM(CASE WHEN ClosingPrice < PreviousClosingPrice THEN 1 ELSE 0 END) AS Declined
-        FROM RankedPrices
-        WHERE PreviousClosingPrice IS NOT NULL  -- Exclude the first day for each product
-        GROUP BY Date
-        ORDER BY Date
-    )
-    insert into MarketMovement SELECT * FROM DailyChanges;
-    """
-
-    try:
-        with connection.cursor() as cur:
-            cur.execute(query)
-            # Fetch and return the result
-            connection.commit()
-    except Exception as e:
-        print(f"(E06) An error occurred: {e}")
-
-
-def initialize(connection):
-    reset_data(connection)
+def initialize_portfolio(portfolio: Portfolio):
+    reset_portfolio(portfolio)
 
 
 def main():
@@ -518,29 +480,57 @@ def main():
         initial_wallet = Decimal(sys.argv[2])
         reinvest_period = int(sys.argv[3])
         reinvest_amt = Decimal(sys.argv[4])
-        if len(sys.argv) == 6:
+        if len(sys.argv) >= 6:
             bank_threshold = int(sys.argv[5])
         else:
             bank_threshold = 75
 
-        portfolio = get_portfolios()[0]
+        if len(sys.argv) >= 7:
+            with_crypto = sys.argv[6]
+        else:
+            with_crypto = "yes"
+
+        if len(sys.argv) >= 8:
+            max_exposure = int(sys.argv[7])
+        else:
+            max_exposure = 20
+
+        if len(sys.argv) >= 9:
+            portfolio_id = int(sys.argv[8])
+            portfolio = Portfolio(portfolio_id, get_database_connection())
+        else:
+            portfolio = portfolio_for_name("main")
+
+        sectors_forbidden = []
+        sectors_allowed = []
+        if with_crypto == "no":
+            sectors_forbidden = ["Cryptocurrency"]
+        elif with_crypto == "only":  # only crypto
+            sectors_allowed = ["Cryptocurrency"]
+
+        if len(sys.argv) >= 10:
+            strategy = sys.argv[9]
+        else:
+            strategy = "advanced"
+
         # with Profiler(interval=0.0001) as profile:
 
-        initialize(portfolio.connection)
+        initialize_portfolio(portfolio)
         portfolio.set_options(
             reserve_cash_percent=reserve_cash_percent,
             reinvest_period=reinvest_period,
             reinvest_amt=reinvest_amt,
             bank_threshold=bank_threshold,
+            sectors_allowed=sectors_allowed,
+            sectors_forbidden=sectors_forbidden,
+            max_exposure=max_exposure,
+            strategy=strategy,
         )
 
         portfolio.wallet.invest(
-            initial_wallet, "1975-04-24", INITIAL_DEPOSIT_DESCRIPTION
+            initial_wallet, "1975-04-24", INITIAL_DEPOSIT_DESCRIPTION, report=False
         )
-        exercise_strategy(
-            portfolio,
-            report=True,
-        )
+        exercise_strategy(portfolio, report=False)
         # profile.print()
     else:
         parameter_search()

@@ -6,7 +6,7 @@ from typing import Union
 
 from cachetools import LFUCache
 
-product_cache = LFUCache(maxsize=1024)
+product_cache = LFUCache(maxsize=4096)
 
 
 class Product:
@@ -38,6 +38,12 @@ class Product:
     @lru_cache(maxsize=1024)
     def from_symbol(connection, symbol: str):
         return Product(connection, symbol=symbol)
+
+    @staticmethod
+    def all_sectors(connection) -> list[str]:
+        with connection.cursor() as cur:
+            cur.execute("SELECT DISTINCT Sector FROM Products")
+            return [row[0] for row in cur.fetchall()]
 
     def refresh_by_product_id(self):
         with self.connection.cursor() as cur:
@@ -107,34 +113,3 @@ class Product:
                 closing_price = result[0]
         product_cache[cache_key] = closing_price
         return closing_price
-
-    def fetch_current_quantity(self, as_of_date) -> Decimal:
-        """
-        Fetch the current quantity of shares owned for a given stock symbol.
-
-        :param symbol: The stock symbol to query.
-        :return: The quantity of shares currently owned for the symbol.
-        """
-        cache_key = f"{self.product_id}-quantity-{as_of_date}"
-        if cache_key in product_cache:
-            self.quantity_cache_hits += 1
-            print(f"Cache hit for {cache_key} {self.quantity_cache_hits}")
-            return product_cache[f"{self.product_id}-quantity"]
-        with self.connection.cursor() as cur:
-            cur.execute(
-                """
-                SELECT sum(pp.Quantity)
-                FROM PortfolioPositions pp
-                WHERE pp.ProductId = %s;
-            """,
-                (self.product_id,),
-            )
-            result = cur.fetchone()
-            if result and result[0]:
-                product_cache[cache_key] = result[0]
-                return result[0]
-            else:
-                product_cache[cache_key] = 0
-                return Decimal(
-                    0
-                )  # Return 0 if the symbol is not found in the portfolio

@@ -23,7 +23,6 @@ VENMO_SUPPORTED_CURRENCY_IDS = [
     "litecoin",
     "bitcoin-cash",
 ]
-# VENMO_SUPPORTED_CURRENCY_IDS = ['bitcoin']
 
 
 def fetch_crypto_list():

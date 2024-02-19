@@ -1,5 +1,6 @@
-def csv_log(d, type, vals=[]):
+def csv_log(d, type, vals=[], report=True):
     rpt = f"{d}, {type}"
     for v in vals:
         rpt += f", {v}"
-    print(rpt)
+    if report:
+        print(rpt)

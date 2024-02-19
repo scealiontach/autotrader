@@ -18,13 +18,19 @@ CREATE TABLE Products (
     CreatedDate TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
 );
 
+alter table products add column dividend_rate NUMERIC
+(10,2);
+alter table products add column info json;
+
+
+
 -- Transactions Table
 CREATE TABLE Transactions (
     TransactionID SERIAL PRIMARY KEY,
     PortfolioID INT NOT NULL,
     ProductID INT NOT NULL,
     TransactionType VARCHAR(4) CHECK (TransactionType IN ('BUY', 'SELL')),
-    Quantity NUMERIC(10, 2) NOT NULL,
+    Quantity NUMERIC(14, 6) NOT NULL,
     Price NUMERIC(10, 2) NOT NULL,
     TransactionDate TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
     FOREIGN KEY (PortfolioID) REFERENCES Portfolios(PortfolioID),
@@ -97,6 +103,14 @@ CREATE TABLE MarketMovement
   declining INT NOT NULL
 );
 
-
-alter table products add column dividend_rate NUMERIC(10,2);
-alter table products add column info json;
+CREATE TABLE Lots
+(
+  LotID SERIAL PRIMARY KEY,
+  PortfolioID INT NOT NULL,
+  ProductID INT NOT NULL,
+  Quantity DECIMAL(14, 6) NOT NULL,
+  PurchasePrice DECIMAL(10, 2) NOT NULL,
+  PurchaseDate DATE NOT NULL,
+  FOREIGN KEY (PortfolioID) REFERENCES Portfolios(PortfolioID),
+  FOREIGN KEY (ProductID) REFERENCES Products(ProductID)
+);

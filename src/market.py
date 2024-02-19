@@ -1,10 +1,15 @@
 from decimal import Decimal
 from functools import lru_cache
 import pandas as pd
+from numpy import ma
+from sqlalchemy.sql import cache_key
 from product import Product
 
-from recommender import ProductAnalyzer
+from analyzer import ProductAnalyzer
 from constants import INDEX_SYMBOLS
+from cachetools import LFUCache
+
+market_cache = LFUCache(maxsize=1024)
 
 
 class Market:
@@ -13,15 +18,19 @@ class Market:
         self.end_date = end_date
         self.indexes = indexes
 
-    @lru_cache(maxsize=1024)
     def adline(self, period=50):
         """
         Checks if the A-D Line moves below its moving average on a particular date.
+        True = A-D Line below its moving average (bearish signal)
+        False = A-D Line above its moving average (bullish signal)
 
         :param target_date: The date to check (YYYY-MM-DD format).
         :param period: The period over which to calculate the moving average.
         :return: Boolean indicating if the A-D Line was below its moving average on the target date.
         """
+        cache_key = f"adline_{self.end_date}_{period}"
+        if cache_key in market_cache:
+            return market_cache[cache_key]
         try:
             # Fetch market movement data up to the target date
             query = """
@@ -43,7 +52,9 @@ class Market:
             if not target_row.empty and (
                 target_row["ad_line"].iloc[0] < target_row["ma"].iloc[0]
             ):
+                market_cache[cache_key] = True
                 return True
+            market_cache[cache_key] = False
             return False
         except Exception as e:
             print(f"(E08) An error occurred: {e}")

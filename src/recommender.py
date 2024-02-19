@@ -5,6 +5,8 @@ from typing import Union
 
 from analyzer import ProductAnalyzer
 from constants import BUY, HOLD, SELL
+from market import Market
+from numpy import mean
 from product import Product
 from market_data_cache import CACHE
 
@@ -44,10 +46,30 @@ class Action(Recommendation):
         self.shares = shares
 
 
+STRATEGIES = [
+    "sma_buy_hold",
+    "rsi",
+    "vwap",
+    "mean_reversion",
+    "macd",
+    "buy_sma_sell_rsi",
+    "buy_sma_sell_vwap",
+    "sma_rsi",
+    "upmacd_downmr",
+    "advanced",
+]
+
+
 class Recommender:
     def __init__(
-        self, connection, portfolio_id: int, product: Product, end_date
+        self,
+        connection,
+        portfolio_id: int,
+        product: Product,
+        end_date,
+        strategy="advanced",
     ) -> None:
+        self.strategy = strategy
         self.connection = connection
         self.portfolio_id = portfolio_id
         self.end_date = end_date
@@ -192,7 +214,6 @@ class Recommender:
         """
         strategy = "macd"
         try:
-            last_price = self.product.fetch_last_closing_price(self.end_date)
             start_date = self.end_date - timedelta(days=long_span * 3)
             # Fetch historical closing prices up to the target date
             df = self.data_cache.get_data(
@@ -227,6 +248,7 @@ class Recommender:
         if primary_rec.action == HOLD and secondary_rec.action == SELL:
             primary_rec.action = SELL
             primary_rec.strength = secondary_rec.strength
+        primary_rec.strategy = "buy_sma_sell_rsi"
         return primary_rec
 
     def buy_sma_sell_vwap(self, window=50, high=1.02, low=0.98):
@@ -236,6 +258,7 @@ class Recommender:
         if primary_rec.action in (HOLD, BUY) and secondary_rec.action == SELL:
             primary_rec.action = SELL
             primary_rec.strength = secondary_rec.strength
+        primary_rec.strategy = "buy_sma_sell_vwap"
         return primary_rec
 
     def sma_rsi(
@@ -259,7 +282,7 @@ class Recommender:
             return self._make_recommendation(
                 SELL, strategy, strength, info={"rsi": rsi, "rsi_high": high}
             )
-        elif rsi < low:
+        elif rsi < low and rsi != 0:
             return self._make_recommendation(
                 BUY, strategy, (low - rsi) / rsi, info={"rsi": rsi, "rsi_low": low}
             )
@@ -340,11 +363,7 @@ class Recommender:
         with self.connection.cursor() as cur:
             try:
                 for rec in recommendations:
-
-                    if self.product.product_id is None:
-                        print(f"ProductID not found for symbol: {rec.symbol}")
-                        continue
-
+                    product = Product.from_symbol(self.connection, rec.symbol)
                     # Insert the recommendation, skip if already exists for today
                     cur.execute(
                         """
@@ -354,7 +373,7 @@ class Recommender:
                     """,
                         (
                             self.portfolio_id,
-                            self.product.product_id,
+                            product.product_id,
                             rec.as_of,
                             rec.action,
                         ),
@@ -363,3 +382,93 @@ class Recommender:
             except Exception as e:
                 print(f"(E05) Error inserting recommendation for {rec.symbol}: {e}")
                 self.connection.rollback()
+
+    def upmacd_downmr(self):
+        market = Market(self.connection, self.end_date)
+        if market.adline():
+            rec = self.mean_reversion(period=200)
+        else:
+            rec = self.macd()
+        rec.strategy = "upmacd_downmr"
+        return rec
+
+    def advanced_recommendation(self):
+        analyzer = ProductAnalyzer(self.connection, self.product, self.end_date)
+        market = Market(self.connection, self.end_date)
+        score = 0
+
+        adline = market.adline()
+        engulfing = analyzer.engulfing()
+
+        # Trend reversals
+        if not adline and engulfing == "bullish":
+            score += 2
+        elif adline and engulfing == "bearish":
+            score -= 2
+
+        macd = self.macd()
+        if macd.action == BUY:
+            score += macd.strength
+        elif macd.action == SELL:
+            score -= macd.strength
+
+        rsi = self.rsi()
+        if rsi.action == BUY:
+            score += rsi.strength
+        elif rsi.action == SELL:
+            score -= rsi.strength
+
+        vwap = self.vwap()
+        if vwap.action == BUY:
+            score += vwap.strength
+        elif vwap.action == SELL:
+            score -= vwap.strength
+
+        mr = self.mean_reversion()
+        if mr.action == BUY:
+            score += mr.strength
+        elif mr.action == SELL:
+            score -= mr.strength
+
+        reco = self._make_recommendation(
+            HOLD,
+            "advanced",
+            Decimal(score),
+            info={
+                "adline": adline,
+                "engulfing": engulfing,
+                "macd": macd,
+                "rsi": rsi,
+                "vwap": vwap,
+                "mr": mr,
+            },
+        )
+        if score > 2:
+            reco.action = BUY
+        elif score < -2:
+            reco.action = SELL
+        return reco
+
+    def recommend(self):
+        if self.strategy == "sma_buy_hold":
+            return self.sma_buy_hold()
+        elif self.strategy == "rsi":
+            return self.rsi()
+        elif self.strategy == "vwap":
+            return self.vwap()
+        elif self.strategy == "mean_reversion":
+            return self.mean_reversion()
+        elif self.strategy == "macd":
+            return self.macd()
+        elif self.strategy == "buy_sma_sell_rsi":
+            return self.buy_sma_sell_rsi()
+        elif self.strategy == "buy_sma_sell_vwap":
+            return self.buy_sma_sell_vwap()
+        elif self.strategy == "sma_rsi":
+            return self.sma_rsi()
+        elif self.strategy == "upmacd_downmr":
+            return self.upmacd_downmr()
+        elif self.strategy == "advanced":
+            return self.advanced_recommendation()
+        else:
+            raise ValueError(f"Invalid strategy: {self.strategy}")

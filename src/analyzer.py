@@ -154,3 +154,61 @@ class ProductAnalyzer:
         except Exception as e:
             print(f"(E02) An error occurred: {e}")
             return None
+
+    def engulfing(self):
+        """
+        Detects if a Bearish Engulfing pattern occurred for a given product_id on a target date.
+
+        :param product_id: The ID of the product.
+        :param target_date: The target date to check for the pattern (YYYY-MM-DD format).
+        :return: True if a Bearish Engulfing pattern is detected, False otherwise.
+        """
+        try:
+            with self.connection.cursor() as cur:
+                # Fetch the open, high, low, and close prices for the target date and the preceding day
+                cur.execute(
+                    """
+                    SELECT Date, OpeningPrice, ClosingPrice
+                    FROM MarketData
+                    WHERE ProductID = %s AND Date <= %s
+                    AND Date >= %s
+                    ORDER BY Date DESC
+                    LIMIT 2;
+                """,
+                    (
+                        self.product.product_id,
+                        self.end_date,
+                        self.end_date - timedelta(days=7),
+                    ),
+                )
+                rows = cur.fetchall()
+
+                if len(rows) < 2:
+                    return False  # Not enough data to determine the pattern
+
+                # Unpack rows
+                _, open_today, close_today = rows[0]
+                _, open_yesterday, close_yesterday = rows[1]
+
+                # Check for Bearish Engulfing pattern
+                if (
+                    close_yesterday > open_yesterday
+                    and close_today < open_today
+                    and open_today >= close_yesterday
+                    and close_today < open_yesterday
+                ):
+                    return "bearish"  # Bearish Engulfing pattern detected
+                else:
+                    # Check for Bullish Engulfing pattern
+                    if (
+                        close_yesterday < open_yesterday
+                        and close_today > open_today
+                        and open_today <= close_yesterday
+                        and close_today > open_yesterday
+                    ):
+                        return "bullish"  # Bullish Engulfing pattern detected
+                    else:
+                        return None  # No Engulfing pattern
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            return None

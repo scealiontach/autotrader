@@ -13,6 +13,8 @@ services:
       - ./sql:/docker-entrypoint-initdb.d
     networks:
       - app-network
+    ports:
+      - "5432:5432"
 
   ubuntu:
     image: ubuntu:latest

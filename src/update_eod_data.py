@@ -1,3 +1,4 @@
+from pkgutil import get_data
 import warnings
 from datetime import datetime, timedelta
 
@@ -134,7 +135,7 @@ def insert_crypto_market_data_to_db(product_id, data):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        print(data[0])
+
         for entry in data:
             cur.execute(
                 """
@@ -193,10 +194,10 @@ def insert_market_data_to_db(product_id, data):
 def update_eod_data(product_id, symbol):
     end_date = datetime.now().date()
     # if the end_date is a saturday or sunday then we need to fetch the data for the previous Friday
-    if end_date.weekday() == 5:
-        end_date -= timedelta(days=1)
-    elif end_date.weekday() == 6:
-        end_date -= timedelta(days=2)
+    # if end_date.weekday() == 5:
+    #     end_date -= timedelta(days=1)
+    # elif end_date.weekday() == 6:
+    #     end_date -= timedelta(days=2)
 
     # end_date + timedelta(days=1)
 
@@ -251,6 +252,48 @@ def update_eod_data(product_id, symbol):
                 conn.commit()
 
 
+def compute_advance_decline_table():
+    """
+    Compute a table showing the date, the number of products that have advanced,
+    and the number that have declined since the previous trading day.
+    """
+    query = """
+    WITH RankedPrices AS (
+        SELECT
+            Date,
+            ProductID,
+            ClosingPrice,
+            LAG(ClosingPrice) OVER (PARTITION BY ProductID ORDER BY Date) AS PreviousClosingPrice
+        FROM MarketData
+    ),
+    DailyChanges AS (
+        SELECT
+            Date,
+            SUM(CASE WHEN ClosingPrice > PreviousClosingPrice THEN 1 ELSE 0 END) AS Advanced,
+            SUM(CASE WHEN ClosingPrice < PreviousClosingPrice THEN 1 ELSE 0 END) AS Declined
+        FROM RankedPrices
+        WHERE PreviousClosingPrice IS NOT NULL  -- Exclude the first day for each product
+        GROUP BY Date
+        ORDER BY Date
+    )
+    insert into MarketMovement SELECT * FROM DailyChanges;
+    """
+
+    try:
+        with psycopg2.connect(DATABASE_URL) as connection:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                           DELETE from MarketMovement;
+                           """
+                )
+                cur.execute(query)
+                # Fetch and return the result
+                connection.commit()
+    except Exception as e:
+        print(f"(E06) An error occurred: {e}")
+
+
 def get_last_recorded_date(product_id):
     with psycopg2.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
@@ -278,6 +321,8 @@ def update():
         crypto_id = info["id"]
         data = fetch_crypto_historical_data(crypto_id)
         insert_crypto_market_data_to_db(product_id, data)
+
+    compute_advance_decline_table()
 
 
 if __name__ == "__main__":
