@@ -36,36 +36,6 @@ def fetch_crypto_list():
         return []
 
 
-def fetch_sp500_symbols(url=SLICKCHARTS_SP500_URL):
-    try:
-        # Fetch the webpage content
-        response = requests.get(url)
-        response.raise_for_status()  # Raise an error for bad responses
-
-        # Parse the HTML content
-        soup = BeautifulSoup(response.text, HTML_PARSER)
-
-        # Find all rows in the table containing the symbols
-        # This depends on the specific structure of the webpage
-        # As of my last update, symbols are in a table with rows <tr> and the symbol is in the second column <td>
-        symbols = []
-        for row in soup.find_all("tr"):
-            cols = row.find_all("td")
-            if len(cols) > 2:  # Ensure the row has enough columns
-                symbol = cols[
-                    2
-                ].text.strip()  # Symbol is assumed to be in the third column
-                symbols.append(symbol)
-
-        return symbols
-    except requests.RequestException as e:
-        print(f"Request failed: {e}")
-    except Exception as e:
-        print(f"An error occurred: {e}")
-
-    return []  # Return an empty list in case of failure
-
-
 def fetch_sp500_symbols_wikipedia(
     url=WIKIPEDIA_SP500_URL,
 ):

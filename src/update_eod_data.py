@@ -1,4 +1,3 @@
-from pkgutil import get_data
 import warnings
 from datetime import datetime, timedelta
 
@@ -116,19 +115,6 @@ def fetch_crypto_historical_data(crypto_id, vs_currency="usd", weeks=520):
     return new_historical_data
 
 
-def eod_fetch_historical_data(symbol):
-    """Fetch the last 200 days of historical market data for a given symbol from the EOD Historical Data API."""
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=365)
-    url = f"https://eodhistoricaldata.com/api/eod/{symbol}?from={start_date.strftime('%Y-%m-%d')}&to={end_date.strftime('%Y-%m-%d')}&api_token={API_KEY}&fmt=json"
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"Error fetching data for {symbol}: {response.text}")
-        return None
-
-
 def insert_crypto_market_data_to_db(product_id, data):
     """Insert market data into the MarketData table."""
     conn = None
@@ -153,39 +139,6 @@ def insert_crypto_market_data_to_db(product_id, data):
             )
         conn.commit()
         cur.close()
-    finally:
-        if conn is not None:
-            conn.close()
-
-
-def insert_market_data_to_db(product_id, data):
-    """Insert market data into the MarketData table."""
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        for entry in data:
-            cur.execute(
-                """
-                INSERT INTO MarketData (ProductID, Date, OpeningPrice, ClosingPrice, HighPrice, LowPrice, Volume)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (ProductID, Date) DO NOTHING;
-            """,
-                (
-                    product_id,
-                    entry["date"],
-                    entry["open"],
-                    entry["close"],
-                    entry["high"],
-                    entry["low"],
-                    entry["volume"],
-                ),
-            )
-        conn.commit()
-        cur.close()
-    except Exception as error:
-        print(f"E4: {error}")
-        raise error
     finally:
         if conn is not None:
             conn.close()
