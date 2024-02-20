@@ -14,11 +14,6 @@ def fetch_products_from_db():
     """Fetch product symbols from the database."""
     products = []
     with Session() as session:
-        # statement = text(
-        #     """
-        #     SELECT ProductID, Symbol FROM Products where sector not in ('Cryptocurrency');
-        #     """
-        # )
         statement = text(
             """
             SELECT ProductID, Symbol FROM Products;
@@ -30,132 +25,8 @@ def fetch_products_from_db():
     return products
 
 
-def fetch_crypto_from_db():
-    """Fetch product symbols from the database."""
-    products = []
-    with Session() as session:
-        statement = text(
-            """
-            SELECT ProductID, info FROM Products where sector in ('Cryptocurrency');
-            """
-        )
-        products = session.execute(statement).all()
-    return products
-
-
-def fetch_crypto_historical_data(crypto_id, vs_currency="usd", weeks=520):
-    """
-    Fetch historical data for a given cryptocurrency from the CoinGecko API.
-
-    :param crypto_id: ID of the cryptocurrency (e.g., 'bitcoin', 'ethereum')
-    :param vs_currency: The target currency of market data (e.g., 'usd', 'eur')
-    :param days: The number of days to fetch historical data for (max 90 days)
-    :return: A list of daily prices and market caps.
-    """
-    url = f"https://api.coingecko.com/api/v3/coins/{crypto_id}/market_chart/range"
-    from_date = datetime.today() - timedelta(weeks=weeks)
-    to_date = datetime.today()
-    params = {
-        "vs_currency": vs_currency,
-        "from": from_date.timestamp(),
-        "to": to_date.timestamp(),
-    }
-    response = requests.get(url, params=params)
-    data = response.json()
-
-    # Extracting prices and market_caps
-    prices = data.get("prices", [])
-    market_caps = data.get("market_caps", [])
-    total_volumes = data.get("total_volumes", [])
-
-    # Converting timestamps to readable dates
-    historical_data = []
-    for price, market_cap, volume in zip(prices, market_caps, total_volumes):
-        date = datetime.utcfromtimestamp(price[0] / 1000).strftime("%Y-%m-%d")
-        historical_data.append(
-            {
-                "date": date,
-                "price": price[1],
-                "market_cap": market_cap[1],
-                "volume": volume[1],
-            }
-        )
-    historical_data.sort(key=lambda x: x["date"])
-
-    previous_datum = None
-    new_historical_data = []
-    for datum in historical_data:
-        if previous_datum:
-            new_datum = {
-                "date": datum["date"],
-                "closingprice": datum["price"],
-                "market_cap": datum["market_cap"],
-                "volume": datum["volume"],
-                "openingprice": previous_datum["price"],
-            }
-            new_historical_data.append(new_datum)
-        else:
-            new_datum = {
-                "date": datum["date"],
-                "closingprice": datum["price"],
-                "market_cap": datum["market_cap"],
-                "volume": datum["volume"],
-                "openingprice": datum["price"],
-            }
-
-            new_historical_data.append(new_datum)
-        previous_datum = datum
-
-    return new_historical_data
-
-
-def insert_crypto_market_data_to_db(product_id, data):
-    """Insert market data into the MarketData table."""
-    with Session() as session:
-        earliest_date = None
-        latest_date = None
-        for entry in data:
-            statement = text(
-                """
-                INSERT INTO MarketData (ProductID, Date, OpeningPrice, ClosingPrice, Volume)
-                VALUES (:product_id, :date, :openingprice, :closingprice, :volume)
-                ON CONFLICT (ProductID, Date) DO UPDATE
-                SET OpeningPrice = EXCLUDED.OpeningPrice,
-                    ClosingPrice = EXCLUDED.ClosingPrice,
-                    Volume = EXCLUDED.Volume;
-            """
-            )
-            session.execute(
-                statement,
-                {
-                    "product_id": product_id,
-                    "date": entry["date"],
-                    "openingprice": entry["openingprice"],
-                    "closingprice": entry["closingprice"],
-                    "volume": entry["volume"],
-                },
-            )
-            if earliest_date is None:
-                earliest_date = entry["date"]
-                latest_date = entry["date"]
-            else:
-                if entry["date"] < earliest_date:
-                    earliest_date = entry["date"]
-                if entry["date"] > latest_date:
-                    latest_date = entry["date"]
-            session.commit()
-    return earliest_date, latest_date
-
-
 def update_eod_data(product_id, symbol):
     end_date = datetime.now().date()
-    # if the end_date is a saturday or sunday then we need to fetch the data for the previous Friday
-    # if end_date.weekday() == 5:
-    #     end_date -= timedelta(days=1)
-    # elif end_date.weekday() == 6:
-    #     end_date -= timedelta(days=2)
-
-    # end_date + timedelta(days=1)
 
     last_recorded_date = get_last_recorded_date(product_id)
     if last_recorded_date:
@@ -295,13 +166,7 @@ def update():
                 latest = last
     print(f"Equity market data fetched Earliest date: {earliest} Latest date: {latest}")
 
-    # for product_id, info in fetch_crypto_from_db():
-    #     crypto_id = info["id"]
-    #     data = fetch_crypto_historical_data(crypto_id)
-    #     earliest, latest = insert_crypto_market_data_to_db(product_id, data)
-    # print (f"Crypto market data fetched Earliest date: {earliest} Latest date: {latest}")
-
-    # compute_advance_decline_table()
+    compute_advance_decline_table()
 
 
 if __name__ == "__main__":
