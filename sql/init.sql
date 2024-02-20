@@ -4,7 +4,19 @@ CREATE TABLE Portfolios (
     Name VARCHAR(255) NOT NULL,
     Owner VARCHAR(255),
     Description TEXT,
-    CreatedDate TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+    CreatedDate TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+    IsActive BOOLEAN DEFAULT TRUE,
+    reserve_cash_percent DECIMAL(5, 2) DEFAULT 5,
+    reinvest_period INTEGER DEFAULT 7,
+    reinvest_amt DECIMAL(15, 2) DEFAULT 0,
+    bank_threshold DECIMAL(8, 2) DEFAULT 10000,
+    bank_pc INTEGER DEFAULT 33,
+    rebalance_months JSON default '[1]',
+    dividend_only BOOLEAN DEFAULT FALSE,
+    sectors_allowed JSON default '[]',
+    sectors_forbidden JSON default '[]',
+    max_exposure INTEGER DEFAULT 20,
+    strategy VARCHAR(32) DEFAULT 'advanced'
 );
 
 -- Products (Equities) Table

@@ -39,7 +39,7 @@ class Market:
                     ORDER BY date ASC;
                 """
                 statement = text(query)
-                df = pd.read_sql(statement, session.bind, params={"before_date":self.end_date})  # type: ignore
+                df = pd.read_sql(statement, session.bind, params={"before_date": self.end_date})  # type: ignore
 
                 # Calculate the A-D Line as a cumulative sum of net advancing
                 df["ad_line"] = df["net_advancing"].cumsum()

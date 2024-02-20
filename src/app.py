@@ -1,19 +1,16 @@
 # from constants import DATABASE_URL
-from datetime import datetime
+import threading
+from decimal import Decimal
 
-from flask import Flask, render_template, request, jsonify, g
+from flask import Flask, g, jsonify, redirect, render_template, request
 from flask_material import Material
-from models import (
-    CashTransaction,
-    Portfolio,
-    PortfolioPosition,
-    TradingRecommendation,
-    Transaction,
-)
+from sqlalchemy.sql.operators import as_
 
-
+import update_eod_data
 from database import Session
-from portfolio import Lot, portfolio_for_name
+from driver import INITIAL_DEPOSIT_DESCRIPTION, exercise_strategy, initialize_portfolio
+from models import CashTransaction, TradingRecommendation, Transaction
+from portfolio import Lot, Portfolio, Position
 from product import Product
 
 app = Flask(__name__, template_folder="./templates")
@@ -37,6 +34,17 @@ def home():
     return render_template("home.html")
 
 
+def is_api_request(request):
+    return "fmt" in request.args and request.args["fmt"] == "json"
+
+
+@app.route("/update", methods=["POST"])
+def update():
+    bg_thread = threading.Thread(target=update_eod_data.update)
+    bg_thread.start()
+    return redirect(f"/")
+
+
 @app.route("/portfolios", methods=["POST"])
 def create_portfolio():
     data = request.json
@@ -56,63 +64,70 @@ def create_portfolio():
 
 @app.route("/portfolios", methods=["GET"])
 def portfolios():
-    portfolios_data = g.db_session.query(Portfolio).all()
-    portfolios = [
-        {"id": p.id, "name": p.name, "owner": p.owner, "createddate": p.createddate}
-        for p in portfolios_data
-    ]
-    if ("fmt" in request.args) and (request.args["fmt"] == "json"):
-        return jsonify(portfolios)
+    portfolios: list[Portfolio] = (
+        g.db_session.query(Portfolio).order_by(Portfolio.id.asc()).all()
+    )
+    data = []
+    for p in portfolios:
+        data.append(p.as_dict())
+    if is_api_request(request):
+        return jsonify(data)
     else:
-        rows = []
-        for p in portfolios:
-            _p = portfolio_for_name(p["name"])
-            as_of = datetime.today()
-            rows.append(
-                {
-                    "id": _p.portfolio_id,
-                    "name": p["name"],
-                    "cash": _p.cash_balance(as_of),
-                    "invest": _p.invest_balance(as_of),
-                    "value": _p.value(as_of),
-                    "bank": _p.bank_balance(as_of),
-                }
-            )
-        return render_template("portfolios.html", portfolios=rows)
+        return render_template("portfolios.html", data=data)
 
 
 @app.route("/portfolios/<int:portfolio_id>", methods=["GET"])
 def portfolio_detail(portfolio_id):
-    _portfolio = g.db_session.query(Portfolio).get(portfolio_id)
-    if ("fmt" in request.args) and (request.args["fmt"] == "json"):
-        if _portfolio:
-            return jsonify(
-                {
-                    "id": _portfolio.id,
-                    "name": _portfolio.name,
-                    "owner": _portfolio.owner,
-                    "createddate": _portfolio.createddate,
-                }
-            )
+    portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
+    if is_api_request(request):
+        if portfolio:
+            return jsonify(portfolio.as_dict())
         return jsonify({"message": "Portfolio not found"}), 404
     else:
-        if _portfolio:
+        if portfolio:
+            positions = [p.as_dict() for p in portfolio.positions()]
+            for p in positions:
+                p["symbol"] = Product.from_id(p["product_id"]).symbol
+            return render_template(
+                "portfolio_detail.html",
+                portfolio=portfolio.as_dict(),
+                positions=positions,
+            )
 
-            _p = portfolio_for_name(_portfolio.name)
-            as_of = datetime.today()
-            data = {
-                "id": _p.portfolio_id,
-                "name": _portfolio.name,
-                "cash": _p.cash_balance(as_of),
-                "invest": _p.invest_balance(as_of),
-                "value": _p.value(as_of),
-                "bank": _p.bank_balance(as_of),
-            }
-            return render_template("portfolio_detail.html", portfolio=data, as_of=as_of)
         return jsonify({"message": "Portfolio not found"}), 404
 
 
-@app.route("/api/portfolios/<int:portfolio_id>/recommendations", methods=["GET"])
+@app.route("/portfolios/<int:portfolio_id>/simulate", methods=["POST"])
+def portfolio_simulate(portfolio_id):
+    portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
+    if portfolio:
+        bg_thread = threading.Thread(
+            target=exercise_strategy, args=(portfolio,), kwargs={"report": False}
+        )
+        bg_thread.start()
+        return redirect(request.referrer)
+    return jsonify({"message": "Portfolio not found"}), 404
+
+
+@app.route("/portfolios/<int:portfolio_id>/reset", methods=["POST"])
+def portfolio_reset(portfolio_id):
+    portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
+    if portfolio:
+        initialize_portfolio(portfolio)
+        return redirect(request.referrer)
+    return jsonify({"message": "Portfolio not found"}), 404
+
+
+@app.route("/portfolios/<int:portfolio_id>/invest", methods=["POST"])
+def portfolio_invest(portfolio_id):
+    portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
+    if portfolio:
+        portfolio.invest(Decimal(1000), "1975-04-24", INITIAL_DEPOSIT_DESCRIPTION)
+        return redirect(request.referrer)
+    return jsonify({"message": "Portfolio not found"}), 404
+
+
+@app.route("/portfolios/<int:portfolio_id>/recommendations", methods=["GET"])
 def get_portfolio_recommendations(portfolio_id):
     result = (
         g.db_session.query(TradingRecommendation)
@@ -120,20 +135,11 @@ def get_portfolio_recommendations(portfolio_id):
         .where(Portfolio.id == portfolio_id)
         .all()
     )
-    result_data = [
-        {
-            "id": r.id,
-            "portfolio_id": r.portfolio_id,
-            "product_id": r.product_id,
-            "recommendation_date": r.recommendation_date,
-            "action": r.action,
-        }
-        for r in result
-    ]
+    result_data = [r.as_dict() for r in result]
     return jsonify(result_data)
 
 
-@app.route("/api/portfolios/<int:portfolio_id>", methods=["PUT"])
+@app.route("/portfolios/<int:portfolio_id>", methods=["PUT"])
 def update_portfolio(portfolio_id):
     portfolio = g.db_session.query(Portfolio).get(portfolio_id)
     if portfolio:
@@ -147,7 +153,7 @@ def update_portfolio(portfolio_id):
     return jsonify({"message": "Portfolio not found"}), 404
 
 
-@app.route("/api/portfolios/<int:portfolio_id>", methods=["DELETE"])
+@app.route("/portfolios/<int:portfolio_id>", methods=["DELETE"])
 def delete_portfolio(portfolio_id):
     portfolio = g.db_session.query(Portfolio).get(portfolio_id)
     if portfolio:
@@ -157,7 +163,7 @@ def delete_portfolio(portfolio_id):
     return jsonify({"message": "Portfolio not found"}), 404
 
 
-@app.route("/api/portfolios/<int:portfolio_id>/transactions", methods=["GET"])
+@app.route("/portfolios/<int:portfolio_id>/transactions", methods=["GET"])
 def get_portfolio_transactions(portfolio_id):
     transactions = (
         g.db_session.query(Transaction)
@@ -165,22 +171,15 @@ def get_portfolio_transactions(portfolio_id):
         .order_by(Transaction.transaction_date.desc())
         .all()
     )
-    transactions_data = [
-        {
-            "id": t.id,
-            "product_id": t.product_id,
-            "portfolio_id": t.portfolio_id,
-            "quantity": t.quantity,
-            "price": t.price,
-            "transaction_date": t.transaction_date,
-            "transaction_type": t.transaction_type,
-        }
-        for t in transactions
-    ]
-    return jsonify(transactions_data)
+    transactions_data = [t.as_dict() for t in transactions]
+    for tx in transactions_data:
+        tx["symbol"] = Product.from_id(tx["product_id"]).symbol
+    if is_api_request(request):
+        return jsonify(transactions_data)
+    return render_template("tx_register.html", transactions=transactions_data)
 
 
-@app.route("/api/portfolios/<int:portfolio_id>/cash", methods=["GET"])
+@app.route("/portfolios/<int:portfolio_id>/cash", methods=["GET"])
 def get_portfolio_cashtransactions(portfolio_id):
     transactions = (
         g.db_session.query(CashTransaction)
@@ -188,165 +187,107 @@ def get_portfolio_cashtransactions(portfolio_id):
         .order_by(CashTransaction.transaction_date.desc())
         .all()
     )
-    transactions_data = [
-        {
-            "id": t.id,
-            "portfolio_id": t.portfolio_id,
-            "portfolio_id": t.portfolio_id,
-            "transaction_type": t.transaction_type,
-            "amount": t.amount,
-            "transaction_date": t.transaction_date,
-            "description": t.description,
-        }
-        for t in transactions
-    ]
-    return jsonify(transactions_data)
+    transactions_data = [t.as_dict() for t in transactions]
+    if is_api_request(request):
+        return jsonify(transactions_data)
+    return render_template("cash_register.html", transactions=transactions_data)
 
 
-@app.route("/api/portfolios/<int:portfolio_id>/positions", methods=["GET"])
+@app.route("/portfolios/<int:portfolio_id>/positions", methods=["GET"])
 def get_portfolio_positions(portfolio_id):
     positions = (
-        g.db_session.query(PortfolioPosition)
+        g.db_session.query(Position)
         .filter_by(portfolio_id=portfolio_id)
-        .order_by(PortfolioPosition.purchasedate.desc())
+        .order_by(Position.purchasedate.desc())
         .all()
     )
-    positions_data = [
-        {
-            "id": p.id,
-            "product_id": p.product_id,
-            "quantity": p.quantity,
-            "purchasedate": p.purchasedate,
-            "last_updated": p.last_updated,
-            "last": p.last,
-            "invest": p.invest,
-        }
-        for p in positions
-    ]
+    positions_data = [p.as_dict() for p in positions]
     return jsonify(positions_data)
 
 
-@app.route("/api/positions", methods=["GET"])
-def get_positions():
+@app.route("/positions", methods=["GET"])
+def positions():
     positions = (
-        g.db_session.query(PortfolioPosition)
-        .order_by(PortfolioPosition.purchasedate.desc())
-        .all()
+        g.db_session.query(Position).order_by(Position.purchasedate.desc()).all()
     )
-    positions_data = [
-        {
-            "id": p.id,
-            "portfolio_id": p.portfolio_id,
-            "product_id": p.product_id,
-            "quantity": p.quantity,
-            "purchasedate": p.purchasedate,
-            "last_updated": p.last_updated,
-            "last": p.last,
-            "invest": p.invest,
-        }
-        for p in positions
-    ]
+    positions_data = [p.as_dict() for p in positions]
     return jsonify(positions_data)
 
 
-@app.route("/api/positions/<int:position_id>", methods=["GET"])
-def get_position(position_id):
-    position = g.db_session.query(PortfolioPosition).get(position_id)
+@app.route("/positions/<int:position_id>", methods=["GET"])
+def position_detail(position_id):
+    position = g.db_session.query(Position).get(position_id)
     if position:
-        return jsonify(
-            {
-                "id": position.id,
-                "portfolio_id": position.portfolio_id,
-                "product_id": position.product_id,
-                "quantity": position.quantity,
-                "purchasedate": position.purchasedate,
-                "last_updated": position.last_updated,
-                "last": position.last,
-                "invest": position.invest,
-            }
-        )
+        if is_api_request(request):
+            return jsonify(position.as_dict())
+        p = position.as_dict()
+        p["symbol"] = Product.from_id(p["product_id"]).symbol
+        lots = [l.as_dict() for l in position.get_lots()]
+        for l in lots:
+            l["symbol"] = p["symbol"]
+        return render_template("position_detail.html", position=p, lots=lots)
     return jsonify({"message": "Position not found"}), 404
 
 
-@app.route("/api/portfolios/<int:portfolio_id>/lots", methods=["GET"])
-def get_position_lots(portfolio_id):
-    lots = (
-        g.db_session.query(Lot)
-        .filter_by(portfolio_id=portfolio_id)
-        .order_by(Lot.id, Lot.purchasedate.desc())
-        .all()
-    )
-    lots_data = [
-        {
-            "id": l.id,
-            "portfolio_id": l.portfolio_id,
-            "product_id": l.product_id,
-            "quantity": l.quantity,
-            "purchaseprice": l.purchaseprice,
-            "purchasedate": l.purchasedate,
-        }
-        for l in lots
-    ]
+@app.route("/lots", methods=["GET"])
+def lots():
+    lots = g.db_session.query(Lot).order_by(Lot.purchasedate.desc()).all()
+    lots_data = [l.as_dict() for l in lots]
+    for l in lots_data:
+        l["symbol"] = Product.from_id(l["product_id"]).symbol
     return jsonify(lots_data)
 
 
-@app.route("/api/products", methods=["GET"])
-def get_products():
+@app.route("/lots/<int:lot_id>", methods=["GET"])
+def lot_detail(lot_id):
+    lot = g.db_session.query(Lot).get(lot_id)
+    if lot:
+        l = lot.as_dict()
+        l["symbol"] = Product.from_id(l["product_id"]).symbol
+        return jsonify(l)
+    return jsonify({"message": "Lot not found"}), 404
+
+
+@app.route("/positions/<int:position_id>/lots", methods=["GET"])
+def get_position_lots(position_id):
+    lots = (
+        g.db_session.query(Lot)
+        .join(Position)
+        .where(Position.id == position_id)
+        .order_by(Lot.id, Lot.purchasedate.desc())
+        .all()
+    )
+    lots_data = [l.as_dict() for l in lots]
+    for l in lots_data:
+        l["symbol"] = Product.from_id(l["product_id"]).symbol
+    return jsonify(lots_data)
+
+
+@app.route("/products", methods=["GET"])
+def products():
     products = g.db_session.query(Product).order_by(Product.symbol).all()
-    products_data = [
-        {
-            "id": p.id,
-            "symbol": p.symbol,
-            "company_name": p.company_name,
-            "sector": p.sector,
-            "market": p.market,
-            "is_active": p.is_active,
-            "dividend_rate": p.dividend_rate,
-            "info": p.info,
-            "createddate": p.createddate,
-        }
-        for p in products
-    ]
+    products_data = [p.as_dict() for p in products]
     return jsonify(products_data)
 
 
-@app.route("/api/products/id/<int:product_id>", methods=["GET"])
-def get_product(product_id):
-    product = g.db_session.query(Product).get(product_id)
+@app.route("/products/id/<int:product_id>", methods=["GET"])
+def product_detail(product_id):
+    product: Product = g.db_session.query(Product).get(product_id)
     if product:
-        return jsonify(
-            {
-                "id": product.id,
-                "symbol": product.symbol,
-                "company_name": product.company_name,
-                "sector": product.sector,
-                "market": product.market,
-                "is_active": product.is_active,
-                "dividend_rate": product.dividend_rate,
-                "info": product.info,
-                "createddate": product.createddate,
-            }
-        )
+        stock_data = product.as_dict()
+        if is_api_request(request):
+            return jsonify(stock_data)
+        if stock_data["sector"] == "Cryptocurrency":
+            return render_template("product_detail-crypto.html", stock_data=stock_data)
+        return render_template("product_detail.html", stock_data=stock_data)
     return jsonify({"message": "Product not found"}), 404
 
 
-@app.route("/api/products/sym/<string:symbol>", methods=["GET"])
-def get_product_by_symbol(symbol):
+@app.route("/products/sym/<string:symbol>", methods=["GET"])
+def product_by_symbol(symbol):
     product = g.db_session.query(Product).filter_by(symbol=symbol).first()
     if product:
-        return jsonify(
-            {
-                "id": product.id,
-                "symbol": product.symbol,
-                "company_name": product.company_name,
-                "sector": product.sector,
-                "market": product.market,
-                "is_active": product.is_active,
-                "dividend_rate": product.dividend_rate,
-                "info": product.info,
-                "createddate": product.createddate,
-            }
-        )
+        return redirect(f"/products/id/{product.id}")
     return jsonify({"message": "Product not found"}), 404
 
 

@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+
+{%block title%}Cash Transactions{%endblock%}
+
+{% block content %}
+<table id='tx_list'>
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>PortfolioID</th>
+      <th>Transaction Type</th>
+      <th>Description</th>
+      <th>Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for tx in transactions %}
+    <tr>
+      <td>{{ tx.transaction_date }}</td>
+      <td>{{ link_to_portfolio(tx.portfolio_id, tx.portfolio_id) }}</td>
+      <td>{{ tx.transaction_type }}</td>
+      <td>{{ tx.description }}</td>
+      <td>{{ currency_fmt(tx.amount) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<script>
+  var tf = new TableFilter('tx_list', {
+    base_path: '{{tf_path()}}',
+    col_types: ['string', 'number', 'string', 'string', 'number'],
+    extensions: [{
+      name: 'sort',
+      images_path: '{{tf_path()}}style/themes/'
+    }]
+  });
+  tf.init();
+</script>
+
+{% endblock content %}

@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+
+{%block title%}Cash Transactions{%endblock%}
+
+{% block content %}
+<table id='tx_list'>
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>PortfolioID</th>
+      <th>Transaction Type</th>
+      <th>Quantity</th>
+      <th>Symbol</th>
+      <th>Price</th>
+      <th>Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for tx in transactions %}
+    <tr>
+      <td>{{ tx.transaction_date }}</td>
+      <td>{{ link_to_portfolio(tx.portfolio_id, tx.portfolio_id) }}</td>
+      <td>{{ tx.transaction_type }}</td>
+      <td>{{ share_fmt(tx.quantity) }}</td>
+      <td>{{ link_to_product(tx.product_id, tx.symbol) }}</td>
+      <td>{{ currency_fmt(tx.price) }}</td>
+      <td>{{ currency_fmt(tx.quantity*tx.price) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<script>
+  var tf = new TableFilter('tx_list', {
+    base_path: '{{tf_path()}}',
+    col_types: ['string', 'number', 'string', 'number', 'string', 'number', 'number'],
+    col_2: 'select',
+    col_4: 'select',
+    extensions: [{
+      name: 'sort',
+      images_path: '{{tf_path()}}style/themes/'
+    }],
+    themes: [{
+      name: 'transparent'
+    }]
+  });
+  tf.init();
+</script>
+
+{% endblock content %}

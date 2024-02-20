@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+
+{%block title%}Product Detail{%endblock%}
+
+{% macro yf_link(symbol)%}https://finance.yahoo.com/quote/{{symbol}}{% endmacro %}
+{% macro gf_link(market,symbol)%}https://www.google.com/finance/quote/{{symbol}}:{{market}}{% endmacro %}
+{% macro yf_news_link(symbol)%}https://finance.yahoo.com/quote/{{symbol}}/news{% endmacro %}
+{% macro yf_chart_link(symbol)%}https://finance.yahoo.com/chart/{{symbol}}{% endmacro %}
+
+{% block content %}
+
+<h1>{{ stock_data.company_name }} ({{ stock_data.symbol }})</h1>
+<div class="mdl-grid">
+  <div class="mdl-cell mdl-cell--6-col section">
+      <h2>Company Information</h2>
+      <table>
+          <tr><td>Google Finance:</td><td>{{ external_link(gf_link(stock_data.market,stock_data.symbol),gf_link(stock_data.market,stock_data.symbol))}}</td></tr>
+          <tr><td>Y! Finance:</td><td>{{ external_link(yf_link(stock_data.symbol),yf_link(stock_data.symbol))}}</td></tr>
+          <tr><td>Y! Finance News:</td><td>{{ external_link(yf_news_link(stock_data.symbol),yf_news_link(stock_data.symbol))}}</td></tr>
+          <tr><td>Y! Finance Chart:</td><td>{{ external_link(yf_chart_link(stock_data.symbol),yf_chart_link(stock_data.symbol))}}</td></tr>
+          <tr><td>Address:</td><td>{{ stock_data.info.address1 }}, {{ stock_data.info.address2 }}</td></tr>
+          <tr><td>City:</td><td>{{ stock_data.info.city }}</td></tr>
+          <tr><td>State:</td><td>{{ stock_data.info.state }}</td></tr>
+          <tr><td>Website:</td><td>{{ external_link(stock_data.info.website,stock_data.info.website) }}</td></tr>
+          <tr><td>Sector:</td><td>{{ stock_data.sector }}</td></tr>
+      </table>
+  </div>
+  <div class="mdl-cell mdl-cell--6-col section">
+      <h2>Recommendations</h2>
+      <table>
+        <thead>
+          <tr>
+          <th>Portfolio</th>
+          <th>Strategy</th>
+          <th>Action</th>
+          <th>Recommendation Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for rec in stock_data.recommendations %}
+          <tr>
+            <td>{{ link_to_portfolio(rec.portfolio_id, rec.portfolio_id) }}</td>
+            <td>{{rec.strategy}}</td>
+            <td>{{rec.action}}</td>
+            <td>{{rec.recommendation_date}}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+  </div>
+</div>
+<div class="mdl-grid">
+  <div class="mdl-cell mdl-cell--6-col section">
+      <h2>Company Description</h2>
+      <p>{{ stock_data.info.longBusinessSummary }}</p>
+  </div>
+</div>
+
+{% endblock content %}

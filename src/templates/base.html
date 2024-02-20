@@ -6,13 +6,32 @@
 
 {% macro enddiv() %}</div>{% endmacro %}
 
-{% macro material_head(primary="cyan",secondary="light_blue") %}<link rel="stylesheet" href="https://code.getmdl.io/1.3.0/material.{{primary}}-{{secondary}}.min.css">{% endmacro %}
+{% macro material_head(primary="cyan",secondary="light_blue") %}
+<link rel="stylesheet" href="https://code.getmdl.io/1.3.0/material.{{primary}}-{{secondary}}.min.css">
+{% endmacro %}
 
 {% macro navlink(url, text) %}<a class="mdl-navigation__link" href="{{ url }}">{{text}}</a>{% endmacro%}
+
+{% macro external_link(url, text) %}<a class="mdl-navigation__link" target="_blank" rel="noopener noreferrer" href="{{ url }}">{{text}}</a>{% endmacro%}
 
 {%macro spantitle(title) %}
 <span class="mdl-layout-title">{{ title }}</span>
 {% endmacro %}
+
+{% macro title() %}{{ self.title() }}{% endmacro %}
+
+{% macro link_to_portfolio(id, text) %}{{ navlink(url_for('portfolio_detail',portfolio_id=id), text)}}{% endmacro %}
+{% macro link_to_product(id,symbol) %}{{ navlink(url_for('product_detail',product_id=id), symbol)}}{% endmacro %}
+{% macro link_to_position(id,text) %}{{ navlink(url_for('position_detail',position_id=id), text)}}{% endmacro %}
+{% macro link_to_cashtx(id,text) %}{{ navlink(url_for('get_portfolio_cashtransactions',portfolio_id=id), text)}}{% endmacro %}
+{% macro link_to_tx(id,text) %}{{ navlink(url_for('get_portfolio_transactions',portfolio_id=id), text)}}{% endmacro %}
+{% macro link_to_lot(id,text) %}{{ navlink(url_for('lot_detail',lot_id=id), text)}}{% endmacro %}
+
+{% macro currency_fmt(num) %}{{ "%10.2f" | format(num)}}{% endmacro %}
+{% macro share_fmt(num) %}{{ "%10.6f" | format(num)}}{% endmacro %}
+{% macro perc_fmt(num) %}{{ "%10.0f" | format(num)}}{% endmacro %}
+
+{% macro tf_path() %}https://unpkg.com/tablefilter@0.7.3/dist/tablefilter/{% endmacro %}
 
 {% block doc -%}
 <!DOCTYPE html>
@@ -30,9 +49,10 @@
       {{ material_head()}}
       {% endblock styles %}
     {% endblock head %}
-    {% block scripts %}
       <script defer src="https://code.getmdl.io/1.3.0/material.min.js"></script>
-    {%- endblock scripts %}
+      <script src="{{tf_path()}}/tablefilter.js"></script>
+    {% block scripts %}
+    {% endblock scripts %}
   </head>
   <body{% block body_attribs %}{% endblock body_attribs %}>
     <div class="mdl-layout mdl-js-layout">
@@ -43,6 +63,7 @@
           <span class="mdl-layout-title">{{self.title()}}</span>
           <div class="mdl-layout-spacer"></div>
           <nav class="mdl-navigation" aria-label="navbar">
+            {{ navlink(url_for('home'), 'Home') }}
             {% block navbar %}
             {% endblock navbar %}
           </nav>
@@ -50,6 +71,7 @@
       </header>
       <div class="mdl-layout__drawer">
           <span class="mdl-layout-title">{{ self.title() }} </span>
+          {{ navlink(url_for('portfolios'), 'Portfolios') }}
           {% block drawer %}
           {% endblock drawer %}
       </div>

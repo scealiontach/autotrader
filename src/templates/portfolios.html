@@ -2,47 +2,79 @@
 
 {%block title%}Portfolios{% endblock %}
 
-{% block navbar %}
-  {{ navlink(url_for('home'), 'Home') }}
-{% endblock navbar %}
-
-{% block drawer %}
-  {{ navlink(url_for('home'), 'Home') }}
-{% endblock drawer %}
+{% block scripts %}
+{% endblock scripts%}
 
 {% block content %}
 {{ container() }}
-    <table class="mdl-data-table mdl-js-data-table mdl-data-table--selectable mdl-shadow--2dp">
+    <table id="portfolio_list" class="mdl-data-table mdl-js-data-table mdl-shadow--2dp table-filter">
       <thead>
         <tr>
+          <th class="mdl-data-table__cell">ID</th>
           <th class="mdl-data-table__cell--non-numeric">Name</th>
-          <th>Invest</th>
-          <th>Cash</th>
-          <th>Bank</th>
-          <th>Value</th>
+          <th class="mdl-data-table__cell--non-numeric">Strategy</th>
+          <th class="mdl-data-table__cell--non-numeric">Invest</th>
+          <th class="mdl-data-table__cell--non-numeric">Total</th>
+          <th class="mdl-data-table__cell--non-numeric">ROI</th>
+          <th class="mdl-data-table__cell--non-numeric">Last Active</th>
+          <th class="mdl-data-table__cell--non-numeric">Actions</th>
         </tr>
       </thead>
       <tbody>
-    {% for portfolio in portfolios %}
+    {% for item in data %}
         <tr>
             <td class="mdl-data-table__cell--non-numeric">
-              <a href="/portfolios/{{portfolio.id}}">{{ portfolio.name }}</a>
+              {{item.id}}
+            </td>
+            <td class="mdl-data-table__cell--non-numeric">
+              <a href="/portfolios/{{item.id}}">{{ item.name }}</a>
+            </td>
+            <td class="mdl-data-table__cell--non-numeric">
+              {{ item.strategy }}
             </td>
             <td>
-              {{ "%10.2f"| format(portfolio.invest) }}
+              {{ currency_fmt(item.invest) }}
             </td>
             <td>
-              {{ "%10.2f"| format(portfolio.cash) }}
+              {{ currency_fmt(item.value+item.cash+item.bank) }}
             </td>
             <td>
-              {{ "%10.2f"| format(portfolio.bank) }}
+              {{ perc_fmt(item.roi) }}
+            </td>
+
+            <td class="mdl-data-table__cell--non-numeric">
+              {{ item.last_active }}
             </td>
             <td>
-              {{ "%10.2f"| format(portfolio.value) }}
+              <table><tr>
+                <td><form action="/portfolios/{{item.id}}/simulate" method="post">
+                  <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">play_arrow</i></button>
+                </form></td>
+                <td><form action="/portfolios/{{item.id}}/reset" method="post">
+                  <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">restore</i></button>
+                </form></td>
+                <td><form action="/portfolios/{{item.id}}/invest" method="post">
+                  <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">paid</i></button>
+                </form></td>
+              </tr></table>
+
             </td>
-        </tr>
+          </tr>
     {% endfor %}
       </tbody>
     </table>
+    <script>
+      var tf = new TableFilter('portfolio_list', {
+        base_path: '{{tf_path()}}',
+        col_2: 'select',
+        col_types: ['number', 'string', 'string','number', 'number', 'number', 'string'],
+        extensions: [{
+          name: 'sort',
+          images_path: '{{tf_path()}}style/themes/'
+        }]
+      });
+      tf.init();
+    </script>
+
 {{ enddiv() }}
-{% endblock %}
+{% endblock content %}

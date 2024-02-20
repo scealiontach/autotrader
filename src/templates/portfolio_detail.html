@@ -1,30 +1,80 @@
 
 {% extends 'base.html' %}
 
-{%block title%}Home{%endblock%}
-
-{% block navbar %}
-  {{ navlink(url_for('home'), 'Home') }}
-  {{ navlink(url_for('portfolios'), 'Portfolios') }}
-{% endblock navbar %}
-
-{% block drawer %}
-  {{ navlink(url_for('home'), 'Home') }}
-  {{ navlink(url_for('portfolios'), 'Portfolios') }}
-{% endblock drawer %}
+{%block title%}Portfolio Detail{%endblock%}
 
 {% block content %}
-<div class="mdl-card">
-<div class="mdl-card__title">
-  <h2 class="mdl-card__title-text">{{portfolio.name}}</h2>
-  <div class="mdl-card__supporting-text">
+<div class="mdl-grid">
+  <div class="mdl-cell mdl-cell--12-col">
+    <h3>{{portfolio.name}}</h2>
     <p>{{portfolio.description}}</p>
+    <table>
+      <tr>
+        <td><form action="/portfolios/{{portfolio.id}}/simulate" method="post">
+          <button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Simulate</button>
+        </form></td>
+        <td><form action="/portfolios/{{portfolio.id}}/reset" method="post">
+          <button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Reset</button>
+        </form></td>
+        <td><form action="/portfolios/{{portfolio.id}}/invest" method="post">
+          <button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Invest</button>
+        </form></td>
+      </tr>
+    </table>
   </div>
-  <div class="mdl-card__supporting-text">
-    <p>{{portfolio.invest}}</p>
+</div>
+<div class="mdl-grid">
+  <div class="mdl-cell mdl-cell--3-col">
+    <table>
+      <tr><td><b>Invested</b></td><td>{{currency_fmt(portfolio.invest )}}</td></tr>
+      <tr><td><b>Cash</b></td><td>{{link_to_cashtx(portfolio.id, currency_fmt(portfolio.cash))}}</td></tr>
+      <tr><td><b>Bank</b></td><td>{{currency_fmt(portfolio.bank)}}</td></tr>
+      <tr><td><b>Value</b></td><td>{{link_to_tx(portfolio.id, currency_fmt(portfolio.value))}}</td></tr>
+      <tr><td><b>Total</b></td><td>{{currency_fmt(portfolio.cash+portfolio.bank+portfolio.value)}}</td></tr>
+      <tr><td>ROI</td><td>{{ perc_fmt(portfolio.roi) }}%</td></tr>
+    </table>
   </div>
-  <div class="mdl-card__supporting-text">
-    <p>{{portfolio.value}}</p>
+  <div class="mdl-cell mdl-cell--3-col">
+    <table>
+      <tr><td><b>Last Active Date</b></td><td>{{portfolio.last_active}}</td></tr>
+      <tr><td><b>Strategy</b></td><td>{{portfolio.strategy}}</td></tr>
+      <tr><td><b>Dividend Stocks Only</b></td><td>{{portfolio.dividend_only}}</td></tr>
+      <tr><td><b>Max Exposure</b></td><td>{{portfolio.max_exposure}}%</td></tr>
+      <tr><td><b>Bank Percentage</b></td><td>{{portfolio.bank_pc}}%</td></tr>
+      <tr><td><b>Bank ROI Threshold</b></td><td>{{portfolio.bank_threshold}}%</td></tr>
+      <tr><td><b>Reserve Cash</b></td><td>{{portfolio.reserve_cash_percent}}%</td></tr>
+      <tr><td><b>Sectors Allowed</b></td><td>{{portfolio.sectors_allowed}}</td></tr>
+      <tr><td><b>Sectors Forbidden</b></td><td>{{portfolio.sectors_forbidden}}</td></tr>
+    </table>
+  </div>
+  <div class="mdl-cell mdl-cell--4-col">
+    <h4>Positions</h4>
+    <table class="mdl-data-table">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Recommendation</th>
+          <th>Shares</th>
+          <th>Price</th>
+          <th>Value</th>
+          <th>Purchased</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for position in positions %}
+          <tr>
+            <td>{{link_to_product(position.product_id, position.symbol)}}</td>
+            <td>{{ position.recommendation }}</td>
+            <td>{{share_fmt(position.quantity)}}</td>
+            <td>{{currency_fmt(position.last)}}</td>
+            <td>{{currency_fmt(position.last * position.quantity)}}</td>
+            <td>{{position.purchasedate}}</td>
+            <td>{{link_to_position(position.id, 'Details')}}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>
 {% endblock content %}

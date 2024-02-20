@@ -2,8 +2,6 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
-    JSON,
-    Boolean,
     Date,
     ForeignKey,
     Integer,
@@ -16,21 +14,6 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
     pass
-
-
-class Portfolio(Base):
-    __tablename__ = "portfolios"
-    id: Mapped[int] = mapped_column("portfolioid", Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    owner: Mapped[Optional[str]] = mapped_column(
-        String(255), unique=False, nullable=True
-    )
-    createddate: Mapped[Date] = mapped_column(
-        Date, unique=False, nullable=False, default=datetime.today
-    )
-
-    def __repr__(self):
-        return "<Portfolio %r>" % self.name
 
 
 class Transaction(Base):
@@ -56,34 +39,16 @@ class Transaction(Base):
     def __repr__(self):
         return "<Transaction %r>" % self.id
 
-
-class PortfolioPosition(Base):
-    __tablename__ = "portfoliopositions"
-    id: Mapped[int] = mapped_column("positionid", Integer, primary_key=True)
-    portfolio_id: Mapped[int] = mapped_column(
-        "portfolioid", ForeignKey("portfolios.portfolioid")
-    )
-    product_id: Mapped[int] = mapped_column(
-        "productid", ForeignKey("products.productid")
-    )
-    quantity: Mapped[DECIMAL] = mapped_column(
-        DECIMAL(14, 6), unique=False, nullable=False
-    )
-    purchasedate: Mapped[Date] = mapped_column(
-        "purchasedate", Date, unique=False, nullable=True
-    )
-    last_updated: Mapped[Date] = mapped_column(
-        "lastupdated", Date, unique=False, nullable=False, default=datetime.today
-    )
-    last: Mapped[DECIMAL] = mapped_column(
-        "last", DECIMAL(14, 6), unique=False, nullable=False
-    )
-    invest: Mapped[DECIMAL] = mapped_column(
-        "invest", DECIMAL(14, 6), unique=False, nullable=False
-    )
-
-    def __repr__(self):
-        return "<PortfolioPosition %r>" % self.id
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "product_id": self.product_id,
+            "portfolio_id": self.portfolio_id,
+            "quantity": self.quantity,
+            "price": self.price,
+            "transaction_date": self.transaction_date,
+            "transaction_type": self.transaction_type,
+        }
 
 
 class TradingRecommendation(Base):
@@ -99,6 +64,15 @@ class TradingRecommendation(Base):
         "recommendationdate", Date, unique=False, nullable=False
     )
     action: Mapped[str] = mapped_column(String(10), unique=False, nullable=False)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "portfolio_id": self.portfolio_id,
+            "product_id": self.product_id,
+            "recommendation_date": self.recommendation_date,
+            "action": self.action,
+        }
 
 
 class CashTransaction(Base):
@@ -119,3 +93,13 @@ class CashTransaction(Base):
     description: Mapped[Optional[str]] = mapped_column(
         Text, unique=False, nullable=True
     )
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "portfolio_id": self.portfolio_id,
+            "transaction_type": self.transaction_type,
+            "amount": self.amount,
+            "transaction_date": self.transaction_date,
+            "description": self.description,
+        }

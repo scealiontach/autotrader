@@ -3,10 +3,8 @@
 
 {%block title%}Home{%endblock%}
 
-{% block navbar %}
-  {{ navlink(url_for('portfolios'), 'Portfolios') }}
-{% endblock navbar %}
-
-{% block drawer %}
-  {{ navlink(url_for('portfolios'), 'Portfolios') }}
-{% endblock drawer %}
+{% block content %}
+<form method="post" action="/update">
+  <button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Update Market Data</button>
+</form>
+{% endblock content %}

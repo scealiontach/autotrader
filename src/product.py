@@ -7,7 +7,7 @@ from typing import Optional, Union
 from sqlalchemy.orm import Mapped, mapped_column
 
 from cachetools import LFUCache
-from models import Base
+from models import Base, TradingRecommendation
 from sqlalchemy import DECIMAL, JSON, Boolean, Date, Integer, String, text
 
 from database import Session
@@ -50,7 +50,10 @@ class Product(Base):
     @staticmethod
     def from_symbol(symbol: str):
         with Session() as session:
-            return session.query(Product).filter(Product.symbol == symbol).first()
+            product = session.query(Product).filter(Product.symbol == symbol).first()
+            if product is None:
+                raise ValueError(f"Product with symbol {symbol} not found")
+            return product
 
     @staticmethod
     def all_sectors() -> list[str]:
@@ -58,6 +61,45 @@ class Product(Base):
             statement = text("SELECT DISTINCT Sector FROM Products")
             result = session.execute(statement)
             return [row[0] for row in result]
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "symbol": self.symbol,
+            "company_name": self.company_name,
+            "sector": self.sector,
+            "market": self.market,
+            "is_active": self.is_active,
+            "dividend_rate": self.dividend_rate,
+            "info": self.info,
+            "createddate": self.createddate,
+            "recommendations": self.recommendations(),
+        }
+
+    def recommendations(self):
+        with Session() as session:
+            rows = (
+                session.query(TradingRecommendation)
+                .where(TradingRecommendation.product_id == self.id)
+                .all()
+            )
+            if rows is None:
+                return []
+            ret = []
+            stmt = text(
+                "SELECT strategy FROM Portfolios WHERE PortfolioId = :portfolio_id"
+            )
+            for row in rows:
+                strats = session.execute(
+                    stmt, {"portfolio_id": row.portfolio_id}
+                ).first()
+                d = row.as_dict()
+                if strats and strats[0]:
+                    d["strategy"] = strats[0]
+                else:
+                    d["strategy"] = None
+                ret.append(d)
+            return ret
 
     def fetch_last_closing_price(self, as_of_date) -> Union[Decimal, NoneType]:
         """

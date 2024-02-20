@@ -25,7 +25,7 @@ class MarketDataCache:
                     ORDER BY Date ASC;
                 """
                 statement = text(query)
-                df = pd.read_sql(statement, session.bind, params={"product_id":product_id, "after_date": self.earliest_date})  # type: ignore
+                df = pd.read_sql(statement, session.bind, params={"product_id": product_id, "after_date": self.earliest_date})  # type: ignore
                 self.cache[product_id] = df
         # Else: Data for this product_id is already loaded
 

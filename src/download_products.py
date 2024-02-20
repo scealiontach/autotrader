@@ -1,6 +1,5 @@
 import json
 from datetime import datetime, timedelta
-from turtle import st
 
 import requests
 import yfinance as yf
@@ -8,7 +7,7 @@ from bs4 import BeautifulSoup, Tag
 from sqlalchemy import text
 
 import update_eod_data
-from constants import DATABASE_URL, INDEX_SYMBOLS
+from constants import INDEX_SYMBOLS
 from database import Session
 
 HTML_PARSER = "html.parser"
@@ -186,16 +185,41 @@ def insert_product_into_db(product_info, active=True):
             """
         INSERT INTO Products (Symbol, CompanyName, Sector, Market, IsActive, dividend_rate, info, createddate)
         VALUES (:symbol, :company_name, :sector, :market, :is_active, :dividend_rate, :info, :createddate)
-        ON CONFLICT (Symbol) do update set IsActive = EXCLUDED.IsActive, dividend_rate=EXCLUDED.dividend_rate, info=EXCLUDED.info;
+        ON CONFLICT (Symbol) do update set IsActive = EXCLUDED.IsActive, dividend_rate=EXCLUDED.dividend_rate, info=EXCLUDED.info,
+        companyname=EXCLUDED.companyname, sector=EXCLUDED.sector, market=EXCLUDED.market;
+
         """
         )
+        if "exchange" in info_data:
+            exchange = info_data["exchange"]
+            if exchange == "NMS":
+                market = "NASDAQ"
+            elif exchange == "NYQ":
+                market = "NYSE"
+            elif exchange == "PCX":
+                market = "NYSEARCA"
+            elif exchange == "BTS":
+                market = "BATS"
+            elif exchange == "NGM":
+                market = "NASDAQ"
+            elif exchange == "CCC":
+                market = "Cryptocurrency"
+            else:
+                market = exchange
+        else:
+            market = "Unknown"
+
+        if market == "Cryptocurrency":
+            sector = "Cryptocurrency"
+        else:
+            sector = product_info["sector"]
         session.execute(
             statement,
             {
                 "symbol": product_info["symbol"],
                 "company_name": product_info["company_name"],
-                "sector": product_info["sector"],
-                "market": product_info["market"],
+                "sector": sector,
+                "market": market,
                 "is_active": active,
                 "dividend_rate": (
                     info_data["dividendRate"] if "dividendRate" in info_data else None
@@ -216,7 +240,8 @@ def insert_crypto_into_db(coins, active=True):
                 """
                 INSERT INTO Products (Symbol, CompanyName, Sector, Market, IsActive, info, createddate)
                 VALUES (:symbol, :company_name, :sector, :market, :is_active, :info, :createddate)
-                ON CONFLICT (Symbol) do update set IsActive = EXCLUDED.IsActive, info=EXCLUDED.info;
+                ON CONFLICT (Symbol) do update set IsActive = EXCLUDED.IsActive, info=EXCLUDED.info,
+                companyname=EXCLUDED.companyname, sector=EXCLUDED.sector, market=EXCLUDED.market;
             """
             )
             session.execute(
@@ -252,18 +277,19 @@ def download_products():
     # if len(sys.argv) < 2:
     #     print("Usage: python script.py SYMBOL1 SYMBOL2 ...")
     #     sys.exit(1)
-    coins = []
-    for id in VENMO_SUPPORTED_CURRENCY_IDS:
-        coin = fetch_crypto_info(id)
-        symbol = coin["symbol"]
-        coins.append(coin)
+    # coins = []
+    # for id in VENMO_SUPPORTED_CURRENCY_IDS:
+    #     coin = fetch_crypto_info(id)
+    #     symbol = coin["symbol"]
+    #     coins.append(coin)
 
-    insert_crypto_into_db(coins)
+    # insert_crypto_into_db(coins)
 
     symbols = []
     symbols += fetch_nasdaq100_symbols_wikipedia()
     symbols += fetch_sp500_symbols_wikipedia()
     symbols += fetch_dji_symbols_wikipedia()
+    symbols += ["pyusd-usd", "eth-usd", "ltc-usd", "bch-usd", "btc-usd"]
     symbols = list(set(symbols))
     symbols.sort()
     for symbol in symbols:
@@ -288,7 +314,6 @@ def download_products():
         if product_info:
             insert_product_into_db(product_info, False)
     # if the end_date is before 7pm we need to fetch the data for the previous day
-    update_eod_data.update()
 
 
 if __name__ == "__main__":

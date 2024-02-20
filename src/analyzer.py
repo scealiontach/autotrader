@@ -1,10 +1,12 @@
+import signal
+import statistics
 from datetime import timedelta
 from decimal import Decimal
 from typing import Union
 
 from sqlalchemy import text
-from database import Session
 
+from database import Session
 from product import Product
 
 
@@ -217,7 +219,7 @@ class ProductAnalyzer:
                     and open_today >= close_yesterday
                     and close_today < open_yesterday
                 ):
-                    return "bearish"  # Bearish Engulfing pattern detected
+                    return -1  # Bearish Engulfing pattern detected
                 else:
                     # Check for Bullish Engulfing pattern
                     if (
@@ -226,9 +228,126 @@ class ProductAnalyzer:
                         and open_today <= close_yesterday
                         and close_today > open_yesterday
                     ):
-                        return "bullish"  # Bullish Engulfing pattern detected
+                        return 1  # Bullish Engulfing pattern detected
                     else:
-                        return None  # No Engulfing pattern
+                        return 0  # No Engulfing pattern
         except Exception as e:
             print(f"An error occurred: {e}")
             return None
+
+    def breakout(self, breakout_window=20):
+        """
+        Evaluates a breakout strategy signal for a specific day using SQL database.
+
+        Parameters:
+        - breakout_window (int): The number of days to consider for identifying the breakout range.
+
+        Returns:
+        - signal (int): The signal for the target date, where 1 represents a buy signal,
+                        -1 represents a sell signal, and 0 represents no signal.
+        """
+        signal = 0
+        with Session() as session:
+            statement = text(
+                """
+                SELECT HighPrice, LowPrice, ClosingPrice
+                FROM MarketData
+                WHERE ProductID = :product_id AND Date <= :target_date
+                ORDER BY Date DESC
+                LIMIT :breakout_window;
+                """
+            )
+            rows = session.execute(
+                statement,
+                {
+                    "product_id": self.product.id,
+                    "target_date": self.end_date,
+                    "breakout_window": breakout_window,
+                },
+            ).all()
+
+            # Ensure there's enough data to evaluate
+            if len(rows) < breakout_window:
+                return 0
+
+            # Extract high, low, and close prices
+            highs = [row[0] for row in rows]
+            lows = [row[1] for row in rows]
+            closing_price = rows[0][2]  # Most recent close price
+
+            # Calculate highest high and lowest low
+            highest_high = max(highs)
+            lowest_low = min(lows)
+
+            # Evaluate the signal
+            if closing_price > highest_high:
+                signal = 1  # Buy signal
+            elif closing_price < lowest_low:
+                signal = -1  # Sell signal
+            else:
+                signal = 0  # No signal
+        return signal
+
+    def bollinger_bands(self, window=20, num_std_dev=2):
+        """
+        Calculate Bollinger Bands signal for a given stock symbol and date.
+
+        Parameters:
+        - window (int): Number of days for the moving average.
+        - num_std_dev (int): Number of standard deviations for the bands.
+
+        Returns:
+        - signal (str): 'BUY', 'SELL', or 'HOLD' based on Bollinger Bands.
+        """
+
+        # Connect to the SQLite database
+        with Session() as session:
+            statement = text(
+                """
+                SELECT Date, ClosingPrice
+                FROM MarketData
+                WHERE ProductID = :product_id AND Date <= :target_date
+                ORDER BY Date DESC
+                LIMIT :window;
+                """
+            )
+            rows = session.execute(
+                statement,
+                {
+                    "product_id": self.product.id,
+                    "target_date": self.end_date,
+                    "window": window,
+                },
+            ).all()
+
+            close_prices = [row[1] for row in rows]
+
+            # Ensure we have enough data points
+            if len(close_prices) < window:
+                return 0
+
+            # Calculate the moving average
+            avg_close = sum(close_prices) / len(close_prices)
+
+            # Calculate the standard deviation
+            std_dev = statistics.stdev(close_prices)
+
+            # Calculate the upper and lower Bollinger Bands
+            upper_band = avg_close + (num_std_dev * std_dev)
+            lower_band = avg_close - (num_std_dev * std_dev)
+
+            # Get the most recent close price
+            recent_close = close_prices[0]
+
+            # Determine the signal
+            if recent_close > upper_band:
+                signal = -1
+            elif recent_close < lower_band:
+                signal = 1
+            else:
+                signal = 0
+
+            return signal
+
+
+# Example usage

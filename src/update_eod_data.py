@@ -3,10 +3,8 @@ from datetime import datetime, timedelta
 
 import requests
 import yfinance as yf
-from pasta.base.annotate import statement
 from sqlalchemy import text
 
-from constants import API_KEY, DATABASE_URL
 from database import Session
 
 warnings.filterwarnings("ignore")
@@ -16,11 +14,17 @@ def fetch_products_from_db():
     """Fetch product symbols from the database."""
     products = []
     with Session() as session:
+        # statement = text(
+        #     """
+        #     SELECT ProductID, Symbol FROM Products where sector not in ('Cryptocurrency');
+        #     """
+        # )
         statement = text(
             """
-            SELECT ProductID, Symbol FROM Products where sector not in ('Cryptocurrency');
+            SELECT ProductID, Symbol FROM Products;
             """
         )
+
         result = session.execute(statement)
         products = result.fetchall()
     return products
@@ -107,14 +111,18 @@ def fetch_crypto_historical_data(crypto_id, vs_currency="usd", weeks=520):
 
 def insert_crypto_market_data_to_db(product_id, data):
     """Insert market data into the MarketData table."""
-    conn = None
     with Session() as session:
+        earliest_date = None
+        latest_date = None
         for entry in data:
             statement = text(
                 """
                 INSERT INTO MarketData (ProductID, Date, OpeningPrice, ClosingPrice, Volume)
                 VALUES (:product_id, :date, :openingprice, :closingprice, :volume)
-                ON CONFLICT (ProductID, Date) DO NOTHING;
+                ON CONFLICT (ProductID, Date) DO UPDATE
+                SET OpeningPrice = EXCLUDED.OpeningPrice,
+                    ClosingPrice = EXCLUDED.ClosingPrice,
+                    Volume = EXCLUDED.Volume;
             """
             )
             session.execute(
@@ -127,7 +135,16 @@ def insert_crypto_market_data_to_db(product_id, data):
                     "volume": entry["volume"],
                 },
             )
+            if earliest_date is None:
+                earliest_date = entry["date"]
+                latest_date = entry["date"]
+            else:
+                if entry["date"] < earliest_date:
+                    earliest_date = entry["date"]
+                if entry["date"] > latest_date:
+                    latest_date = entry["date"]
             session.commit()
+    return earliest_date, latest_date
 
 
 def update_eod_data(product_id, symbol):
@@ -144,20 +161,29 @@ def update_eod_data(product_id, symbol):
     if last_recorded_date:
         # if the last_recorded_date is the same as the end_date then we don't need to fetch any data
         if last_recorded_date.strftime("%Y-%m-%d") == end_date.strftime("%Y-%m-%d"):
-            return
+            return (last_recorded_date, last_recorded_date)
         start_date = last_recorded_date
     else:
         start_date = end_date - timedelta(
             days=5 * 365
         )  # Default to last 365 days if no record exists
 
-    print(f"Fetching data for {symbol} {start_date} to {end_date}...")
+    # print(f"Fetching data for {symbol} {start_date} to {end_date}...")
     stock = yf.Ticker(symbol)
     hist = stock.history(start=start_date, end=end_date)
 
+    first_date = None
+    last_date = None
     with Session() as session:
         for index, row in hist.iterrows():
             date = index.date()  # type: ignore
+            if first_date is None:
+                first_date = date
+                last_date = date
+            if date < first_date:
+                first_date = date
+            if date > last_date:
+                last_date = date
             open_price = row["Open"]
             high_price = row["High"]
             low_price = row["Low"]
@@ -191,6 +217,7 @@ def update_eod_data(product_id, symbol):
                 },
             )
             session.commit()
+    return first_date, last_date
 
 
 def compute_advance_decline_table():
@@ -224,8 +251,8 @@ def compute_advance_decline_table():
         with Session() as session:
             statement = text(
                 """
-                             DELETE from MarketMovement;
-                             """
+                DELETE from MarketMovement;
+                """
             )
             session.execute(statement)
             statement = text(query)
@@ -250,18 +277,31 @@ def get_last_recorded_date(product_id):
 
 
 def update():
+    print("Updating market data...")
     products = list(fetch_products_from_db())
     # sort products by symbol
     products.sort(key=lambda x: x[1])
+    earliest = None
+    latest = None
     for product_id, symbol in products:
-        update_eod_data(product_id, symbol)
+        first, last = update_eod_data(product_id, symbol)
+        if earliest is None:
+            earliest = first
+            latest = last
+        else:
+            if first and first < earliest:
+                earliest = first
+            if last and last > latest:
+                latest = last
+    print(f"Equity market data fetched Earliest date: {earliest} Latest date: {latest}")
 
-    for product_id, info in fetch_crypto_from_db():
-        crypto_id = info["id"]
-        data = fetch_crypto_historical_data(crypto_id)
-        insert_crypto_market_data_to_db(product_id, data)
+    # for product_id, info in fetch_crypto_from_db():
+    #     crypto_id = info["id"]
+    #     data = fetch_crypto_historical_data(crypto_id)
+    #     earliest, latest = insert_crypto_market_data_to_db(product_id, data)
+    # print (f"Crypto market data fetched Earliest date: {earliest} Latest date: {latest}")
 
-    compute_advance_decline_table()
+    # compute_advance_decline_table()
 
 
 if __name__ == "__main__":

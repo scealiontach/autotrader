@@ -9,9 +9,8 @@ from analyzer import ProductAnalyzer
 from constants import BUY, HOLD, SELL
 from database import Session
 from market import Market
-from numpy import mean
-from product import Product
 from market_data_cache import CACHE
+from product import Product
 
 
 class Recommendation:
@@ -35,6 +34,7 @@ class Recommendation:
     def __repr__(self):
         return f"Recommendation({self.symbol}:{self.symbol} strategy={self.strategy}, strength={self.strength})"
 
+
 class Action(Recommendation):
     def __init__(
         self, recommendation: Recommendation, portfolio_move: str, shares: Decimal
@@ -52,6 +52,8 @@ class Action(Recommendation):
 
 
 STRATEGIES = [
+    "bollinger",
+    "breakout",
     "sma_buy_hold",
     "rsi",
     "vwap",
@@ -406,83 +408,109 @@ class Recommender:
         rec.strategy = "upmacd_downmr"
         return rec
 
-    def advanced_recommendation(self):
+    def breakout_recommendation(self, breakout_window=50):
         analyzer = ProductAnalyzer(self.product, self.end_date)
-        market = Market(self.end_date)
+        signal = analyzer.breakout(breakout_window=breakout_window)
+        if signal > 0:
+            return self._make_recommendation(BUY, "breakout", Decimal(signal))
+        elif signal < 0:
+            return self._make_recommendation(SELL, "breakout", Decimal(signal))
+        else:
+            return self._make_recommendation(HOLD, "breakout", Decimal(signal))
+
+    def bollinger_recommendation(self, window=20, num_std_dev=2):
+        analyzer = ProductAnalyzer(self.product, self.end_date)
+        signal = analyzer.bollinger_bands(window=window, num_std_dev=num_std_dev)
+        if signal > 0:
+            return self._make_recommendation(BUY, "bollinger", Decimal(signal))
+        elif signal < 0:
+            return self._make_recommendation(SELL, "bollinger", Decimal(signal))
+        else:
+            return self._make_recommendation(HOLD, "bollinger", Decimal(signal))
+
+    def engulging_recommendation(self):
+        analyzer = ProductAnalyzer(self.product, self.end_date)
+        signal = analyzer.engulfing()
+        if signal and signal > 0:
+            return self._make_recommendation(BUY, "engulfing", Decimal(signal))
+        elif signal and signal < 0:
+            return self._make_recommendation(SELL, "engulfing", Decimal(signal))
+        else:
+            return self._make_recommendation(HOLD, "engulfing", Decimal(0))
+
+    def advanced_recommendation(self, weights=None):
         score = 0
 
-        adline = market.adline()
-        engulfing = analyzer.engulfing()
+        if weights is None:
+            indicator_weights = {
+                "engulfing": 0.1,
+                "macd": 0.1,
+                "rsi": 0.15,
+                "vwap": 0.2,
+                "mean_reversion": 0.1,
+                "breakout": 0.25,
+                "bollinger": 0.25,
+            }
+        else:
+            indicator_weights = weights
 
-        # Trend reversals
-        if not adline and engulfing == "bullish":
-            score += 2
-        elif adline and engulfing == "bearish":
-            score -= 2
+        total_possible_score = 0
+        possible_count = 0
+        for strategy in STRATEGIES:
+            if strategy in indicator_weights:
+                total_possible_score += indicator_weights[strategy]
+                possible_count += 1
 
-        macd = self.macd()
-        if macd.action == BUY:
-            score += macd.strength
-        elif macd.action == SELL:
-            score -= macd.strength
+        if total_possible_score == 0:
+            return self._make_recommendation(HOLD, "advanced", Decimal(0))
 
-        rsi = self.rsi()
-        if rsi.action == BUY:
-            score += rsi.strength
-        elif rsi.action == SELL:
-            score -= rsi.strength
+        threshold = (total_possible_score / possible_count) * 2
 
-        vwap = self.vwap()
-        if vwap.action == BUY:
-            score += vwap.strength
-        elif vwap.action == SELL:
-            score -= vwap.strength
+        score = 0
+        for strategy in STRATEGIES:
+            if strategy in indicator_weights:
+                rec = self._strategy_byname(strategy)
+                if rec.action == BUY:
+                    score += indicator_weights[strategy]
+                elif rec.action == SELL:
+                    score -= indicator_weights[strategy]
 
-        mr = self.mean_reversion()
-        if mr.action == BUY:
-            score += mr.strength
-        elif mr.action == SELL:
-            score -= mr.strength
+        if score >= threshold:
+            return self._make_recommendation(BUY, "advanced", Decimal(score))
+        elif score <= -threshold:
+            return self._make_recommendation(SELL, "advanced", Decimal(score))
+        else:
+            return self._make_recommendation(HOLD, "advanced", Decimal(score))
 
-        reco = self._make_recommendation(
-            HOLD,
-            "advanced",
-            Decimal(score),
-            info={
-                "adline": adline,
-                "engulfing": engulfing,
-                "macd": macd,
-                "rsi": rsi,
-                "vwap": vwap,
-                "mr": mr,
-            },
-        )
-        if score > 2:
-            reco.action = BUY
-        elif score < -2:
-            reco.action = SELL
-        return reco
+    def _strategy_byname(self, strategy: str) -> Recommendation:
+        if strategy == "bollinger":
+            return self.bollinger_recommendation()
+        if strategy == "breakout":
+            return self.breakout_recommendation()
+        if strategy == "sma_buy_hold":
+            return self.sma_buy_hold()
+        elif strategy == "rsi":
+            return self.rsi()
+        elif strategy == "vwap":
+            return self.vwap()
+        elif strategy == "mean_reversion":
+            return self.mean_reversion()
+        elif strategy == "macd":
+            return self.macd()
+        elif strategy == "buy_sma_sell_rsi":
+            return self.buy_sma_sell_rsi()
+        elif strategy == "buy_sma_sell_vwap":
+            return self.buy_sma_sell_vwap()
+        elif strategy == "sma_rsi":
+            return self.sma_rsi()
+        elif strategy == "upmacd_downmr":
+            return self.upmacd_downmr()
+        elif strategy == "advanced":
+            return self.advanced_recommendation()
+        elif strategy == "engulfing":
+            return self.engulging_recommendation()
+        else:
+            raise ValueError(f"Invalid strategy: {strategy}")
 
     def recommend(self):
-        if self.strategy == "sma_buy_hold":
-            return self.sma_buy_hold()
-        elif self.strategy == "rsi":
-            return self.rsi()
-        elif self.strategy == "vwap":
-            return self.vwap()
-        elif self.strategy == "mean_reversion":
-            return self.mean_reversion()
-        elif self.strategy == "macd":
-            return self.macd()
-        elif self.strategy == "buy_sma_sell_rsi":
-            return self.buy_sma_sell_rsi()
-        elif self.strategy == "buy_sma_sell_vwap":
-            return self.buy_sma_sell_vwap()
-        elif self.strategy == "sma_rsi":
-            return self.sma_rsi()
-        elif self.strategy == "upmacd_downmr":
-            return self.upmacd_downmr()
-        elif self.strategy == "advanced":
-            return self.advanced_recommendation()
-        else:
-            raise ValueError(f"Invalid strategy: {self.strategy}")
+        return self._strategy_byname(self.strategy)
