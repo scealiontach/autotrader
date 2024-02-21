@@ -2,7 +2,8 @@ from decimal import Decimal
 import os
 
 # The index symbols: "^GSPC", "^DJI", "^IXIC", "^RUT", "^VIX", "SPY"
-INDEX_SYMBOLS = ["^GSPC", "SPY"]
+ALL_INDEXES = ["^GSPC", "^DJI", "^IXIC", "^RUT", "^VIX"]
+INDEX_SYMBOLS = ["^GSPC"]
 
 # Example: "dbname=mydatabase user=myuser password=mypassword host=localhost"
 DATABASE_URL = os.getenv("DATABASE_URL")

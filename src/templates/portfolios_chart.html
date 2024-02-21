@@ -1,0 +1,13 @@
+
+{% extends 'base.html' %}
+{% import 'chart.j2' as chart %}
+{%block title%}Portfolio Chart{%endblock%}
+
+{% block navbar %}
+{{ navlink(url_for('portfolios'), 'Portfolios') }}
+{% endblock navbar%}
+
+{% block content %}
+{{ chart.chart('chart', graphJSON) }}
+{% endblock content %}
+```

@@ -1,11 +1,24 @@
 {% extends 'base.html' %}
+{% from 'bootstrap5/form.html' import render_form %}
+{% import 'portfolio-form-dialog.j2' as pfd %}
 
 {%block title%}Portfolios{% endblock %}
 
-{% block scripts %}
-{% endblock scripts%}
-
+{% block navbar %}
+{{ navlink(url_for('portfolios')+'/chart', 'Chart') }}
+{% endblock navbar%}
+{% block styles %}
+<style>
+.mdl-dialog {
+  width: 80%;
+  height: 70%;
+}
+</style>
+{% endblock styles %}
 {% block content %}
+{{ container() }}
+{{ pfd.btn('add-portfolio', 'Add Portfolio') }}
+{{ enddiv() }}
 {{ container() }}
     <table id="portfolio_list" class="mdl-data-table mdl-js-data-table mdl-shadow--2dp table-filter">
       <thead>
@@ -27,7 +40,7 @@
               {{item.id}}
             </td>
             <td class="mdl-data-table__cell--non-numeric">
-              <a href="/portfolios/{{item.id}}">{{ item.name }}</a>
+              {{navlink('/portfolios/'+(item.id|string), item.name)}}
             </td>
             <td class="mdl-data-table__cell--non-numeric">
               {{ item.strategy }}
@@ -45,18 +58,28 @@
             <td class="mdl-data-table__cell--non-numeric">
               {{ item.last_active }}
             </td>
-            <td>
-              <table><tr>
-                <td><form action="/portfolios/{{item.id}}/simulate" method="post">
-                  <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">play_arrow</i></button>
-                </form></td>
-                <td><form action="/portfolios/{{item.id}}/reset" method="post">
-                  <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">restore</i></button>
-                </form></td>
-                <td><form action="/portfolios/{{item.id}}/invest" method="post">
-                  <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">paid</i></button>
-                </form></td>
-              </tr></table>
+            <td class="mdl-data-table__cell--non-numeric">
+              {% if item.is_active %}
+              <table>
+                <tr>
+                  <td>
+                    <form action="/portfolios/{{item.id}}/simulate" method="get">
+                      <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">play_arrow</i></button>
+                    </form>
+                  </td>
+                  <td>
+                    <form action="/portfolios/{{item.id}}/reset" method="get">
+                      <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">restore</i></button>
+                    </form>
+                  </td>
+                  <td>
+                    <form action="/portfolios/{{item.id}}/invest" method="get">
+                      <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">paid</i></button>
+                    </form>
+                  </td>
+                </tr>
+              </table>
+              {% endif %}
 
             </td>
           </tr>
@@ -75,6 +98,7 @@
       });
       tf.init();
     </script>
-
 {{ enddiv() }}
+{{ pfd.dialog('add-portfolio', form) }}
+
 {% endblock content %}

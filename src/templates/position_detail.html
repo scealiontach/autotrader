@@ -3,56 +3,48 @@
 {%block title%}Position Detail{%endblock%}
 
 {% block content %}
-
-<table>
-  <thead>
-    <tr>
-      <th>ID</th>
-      <th>Symbol</th>
-      <th>Quantity</th>
-      <th>Last Price</th>
-      <th>Purchased</th>
-      <th>Value</th>
-      <th>Lots</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>{{ position.id }}</td>
-      <td class="mdl-data-table__cell--non-numeric">{{ link_to_product(position.product_id, position.symbol)}}</td>
-      <td>{{ share_fmt(position.quantity) }}</td>
-      <td>{{ currency_fmt(position.last) }}</td>
-      <td>{{ position.purchasedate }}</td>
-      <td>{{ currency_fmt(position.last*position.quantity) }}</td>
-      <td>{{ position.lots | length }}</td>
-    </tr>
-  </tbody>
-</table>
-
-<h3>Lots</h3>
-<table>
-  <thead>
-    <tr>
-      <th>ID</th>
-      <th>Symbol</th>
-      <th>Shares</th>
-      <th>Price</th>
-      <th>Purchased</th>
-      <th>Cost</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for lot in lots %}
-      <tr>
-        <td>{{ link_to_lot(lot.id,lot.id) }}</td>
-        <td class="mdl-data-table__cell--non-numeric">{{link_to_product(position.product_id, position.symbol)}}</td>
-        <td>{{share_fmt(lot.quantity)}}</td>
-        <td>{{currency_fmt(lot.purchaseprice)}}</td>
-        <td class="mdl-data-table__cell--non-numeric">{{lot.purchasedate}}</td>
-        <td>{{currency_fmt(lot.purchaseprice * lot.quantity)}}</td>
-      </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="mdl-grid">
+  <div class="mdl-cell mdl-cell--3-col section">
+    <h3>Overview</h3>
+    <table class="mdl-data-table">
+      <tbody>
+        <tr><th>Position ID</th><td>{{ position.id }}</td></tr>
+          <tr><th>Symbol</th><td class="mdl-data-table__cell--non-numeric">{{ link_to_product(position.product_id, position.symbol)}}</td></tr>
+          <tr><th>Quantity</th><td>{{ share_fmt(position.quantity) }}</td></tr>
+          <tr><th>Last Price</th><td>{{ currency_fmt(position.last) }}</td></tr>
+          <tr><th>Purchased</th><td class="mdl-data-table__cell--non-numeric">{{ position.purchasedate }}</td></tr>
+          <tr><th>Value</th><td>{{ currency_fmt(position.last*position.quantity) }}</td></tr>
+          <tr><th>Lots Count</th><td>{{ position.lots | length }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="mdl-cell mdl-cell--6-col section">
+    <h3>Lots</h3>
+    <table class="mdl-data-table">
+      <thead>
+        <tr>
+          <th>Lot ID</th>
+          <th>Symbol</th>
+          <th>Shares</th>
+          <th>Price</th>
+          <th>Purchased</th>
+          <th>Cost</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for lot in lots %}
+          <tr>
+            <td>{{ link_to_lot(lot.id,lot.id) }}</td>
+            <td class="mdl-data-table__cell--non-numeric">{{link_to_product(position.product_id, position.symbol)}}</td>
+            <td>{{share_fmt(lot.quantity)}}</td>
+            <td>{{currency_fmt(lot.purchaseprice)}}</td>
+            <td class="mdl-data-table__cell--non-numeric">{{lot.purchasedate}}</td>
+            <td>{{currency_fmt(lot.purchaseprice * lot.quantity)}}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% endblock content%}

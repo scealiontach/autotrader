@@ -27,7 +27,7 @@
   </div>
   <div class="mdl-cell mdl-cell--6-col section">
       <h2>Recommendations</h2>
-      <table>
+      <table class="mdl-data-table">
         <thead>
           <tr>
           <th>Portfolio</th>
@@ -38,7 +38,7 @@
         </thead>
         <tbody>
           {% for rec in stock_data.recommendations %}
-          <tr>
+            <tr>
             <td>{{ link_to_portfolio(rec.portfolio_id, rec.portfolio_id) }}</td>
             <td>{{rec.strategy}}</td>
             <td>{{rec.action}}</td>
@@ -52,7 +52,7 @@
 <div class="mdl-grid">
   <div class="mdl-cell mdl-cell--6-col section">
       <h2>Company Description</h2>
-      <p>{{ stock_data.info.longBusinessSummary }}</p>
+      <p>{{ stock_data.info.longBusinessSummary |striptags }}</p>
   </div>
 </div>
 

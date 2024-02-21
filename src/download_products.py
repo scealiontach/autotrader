@@ -23,6 +23,7 @@ VENMO_SUPPORTED_CURRENCY_IDS = [
     "bitcoin-cash",
 ]
 
+
 def fetch_sp500_symbols_wikipedia(
     url=WIKIPEDIA_SP500_URL,
 ):

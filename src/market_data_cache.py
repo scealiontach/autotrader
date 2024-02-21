@@ -12,6 +12,11 @@ class MarketDataCache:
     def set_earliest_date(self, earliest_date):
         self.earliest_date = earliest_date
 
+    def reload_data(self, product_id):
+        if product_id in self.cache:
+            del self.cache[product_id]
+        self.load_data(product_id)
+
     def load_data(self, product_id):
         """
         Load and cache data for the given product_id starting from the earliest_date.

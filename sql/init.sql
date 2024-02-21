@@ -126,3 +126,15 @@ CREATE TABLE Lots
   FOREIGN KEY (PortfolioID) REFERENCES Portfolios(PortfolioID),
   FOREIGN KEY (ProductID) REFERENCES Products(ProductID)
 );
+
+CREATE TABLE portfolio_performance
+(
+  id SERIAL PRIMARY KEY,
+  portfolio_id INTEGER NOT NULL,
+  date DATE NOT NULL,
+  stock_value NUMERIC(15, 2) NOT NULL,
+  invested NUMERIC(15, 2) NOT NULL,
+  cash NUMERIC(15, 2) NOT NULL,
+  bank NUMERIC(15, 2) NOT NULL,
+  FOREIGN KEY (portfolio_id) REFERENCES portfolios(portfolioid)
+);

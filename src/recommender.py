@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from types import NoneType
 from typing import Union
@@ -29,10 +29,21 @@ class Recommendation:
         self.strategy = strategy
         self.strength = strength
         self.info = info
-        self.as_of = None
+        self.as_of: Union[date, None] = None
 
     def __repr__(self):
         return f"Recommendation({self.symbol}:{self.symbol} strategy={self.strategy}, strength={self.strength})"
+
+    def as_dict(self):
+        return {
+            "symbol": self.symbol,
+            "action": self.action,
+            "last": self.last,
+            "strategy": self.strategy,
+            "strength": self.strength,
+            "info": self.info,
+            "as_of": self.as_of,
+        }
 
 
 class Action(Recommendation):

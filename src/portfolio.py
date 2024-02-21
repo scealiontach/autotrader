@@ -1,10 +1,12 @@
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import NoneType
 from typing import Optional, Union
 
-from cachetools import LFUCache
+import pandas as pd
+
+from cachetools import LFUCache, TTLCache
 from models import Base, TradingRecommendation
 from numpy import divide
 from sqlalchemy import (
@@ -27,11 +29,12 @@ from constants import BUY, BUY_TX_FEE, SELL, SELL_TX_FEE
 from database import Session
 from market import Market
 from product import Product
-from recommender import Recommender
+from recommender import Recommendation, Recommender
 from reporting import csv_log
 from utils import round_down, round_up
 
 position_cache = LFUCache(maxsize=4096)
+recommendation_cache = TTLCache(maxsize=4096, ttl=30)
 
 
 class Lot(Base):
@@ -280,14 +283,10 @@ class Portfolio(Base):
         name="",
         owner="",
         description="",
-        parameters: Union[dict, None] = None,
     ):
         self.name = name
         self.owner = owner
         self.description = description
-        if not parameters:
-            parameters = {}
-        self.parameters = parameters  # type: ignore
 
     @staticmethod
     def from_id(portfolio_id: int):
@@ -297,7 +296,7 @@ class Portfolio(Base):
                 raise ValueError(f"Portfolio with ID {portfolio_id} not found")
             return portfolio
 
-    def as_dict(self):
+    def as_dict_fast(self):
         return {
             "id": self.id,
             "name": self.name,
@@ -323,6 +322,13 @@ class Portfolio(Base):
             "roi": self.roi(self.last_active()),
             "last_active": self.last_active(),
         }
+
+    def as_dict(self):
+        ret = self.as_dict_fast()
+        ret["active_recommendations"] = [
+            r.as_dict() for r in self.active_recommendations()
+        ]
+        return ret
 
     def find_position(self, symbol: str) -> Optional[Position]:
         with Session() as session:
@@ -556,6 +562,32 @@ class Portfolio(Base):
             ],
             report=report,
         )
+
+    def record_performance(self, report_date):
+        with Session() as session:
+            bank = self.bank_balance(report_date)
+            total_cash = self.cash_balance(report_date)
+            total_value = self.value(report_date)
+            total_invest = self.invest_balance(report_date)
+
+            statement = text(
+                """
+                INSERT INTO Portfolio_Performance (Portfolio_ID, Date, stock_value, invested, cash, bank)
+                VALUES (:portfolio_id, :date, :stock_value, :invested, :cash, :bank);
+            """
+            )
+            session.execute(
+                statement,
+                {
+                    "portfolio_id": self.id,
+                    "date": report_date,
+                    "stock_value": total_value,
+                    "invested": total_invest,
+                    "cash": total_cash,
+                    "bank": bank,
+                },
+            )
+            session.commit()
 
     def sell(self, product_id, quantity, price, transaction_date, report=True):
         self._execute_trade(
@@ -1095,6 +1127,67 @@ class Portfolio(Base):
             if result:
                 return result[0]
         return None
+
+    def get_performance(self, end_date=None):
+        with Session() as session:
+            if end_date is None:
+                end_date = self.last_active()
+            statement = text(
+                """
+                SELECT Date, stock_value, invested, cash, bank, stock_value + cash + bank as total
+                FROM Portfolio_Performance
+                WHERE Portfolio_ID = :portfolio_id AND Date <= :end_date
+                ORDER BY Date ASC;
+            """
+            )
+            df = pd.read_sql(statement, session.bind, params={"portfolio_id": self.id, "end_date": end_date})  # type: ignore
+            return df
+
+    def active_recommendations(
+        self, as_of_eod: Union[date, None] = None
+    ) -> list[Recommendation]:
+        """
+        Make trading recommendations based on the given portfolio and the market conditions
+        as of a given date.
+        """
+        if as_of_eod is None:
+            if self.is_active:
+                target_date = self.last_active()
+            else:
+                target_date = datetime.today().date()
+        else:
+            target_date = as_of_eod
+
+        cache_key = f"active_recommendations-{self.id}-{target_date}"
+        if cache_key in recommendation_cache:
+            return recommendation_cache[cache_key]
+
+        recommendations: list[Recommendation] = []
+        products = self.eligible_products()
+
+        for p in products:
+            recommender = self.recommender_for(p.symbol, target_date)
+            rec = recommender.recommend()
+            rec.as_of = target_date
+            recommendations.append(rec)
+        recommendations.sort(key=lambda x: x.strength, reverse=True)
+        positions = self.positions()
+        held_symbols = list(
+            map(lambda x: Product.from_id(x.product_id).symbol, positions)
+        )
+        sell_recommendations = list(
+            filter(
+                lambda x: x.action == "SELL" and x.symbol in held_symbols,
+                recommendations,
+            )
+        )
+        buy_recommendations = list(
+            filter(lambda x: x.action == "BUY", recommendations)
+        )[:5]
+        ret_recommendations = sell_recommendations + buy_recommendations
+        ret_recommendations.sort(key=lambda x: x.strength, reverse=True)
+        recommendation_cache[cache_key] = ret_recommendations
+        return ret_recommendations
 
 
 # get all the portfolios in the database

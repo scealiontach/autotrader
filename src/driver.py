@@ -6,6 +6,8 @@ import sys
 import time
 import warnings
 from decimal import Decimal
+
+from sqlalchemy.orm import object_session
 from product import Product
 
 import psutil
@@ -26,7 +28,7 @@ warnings.filterwarnings("ignore")
 INITIAL_DEPOSIT_DESCRIPTION = "Initial deposit"
 
 
-def make_recommendations(portfolio: Portfolio, as_of_eod) -> list[Recommendation]:
+def make_recommendations(portfolio: Portfolio, as_of_eod=None) -> list[Recommendation]:
     """
     Make trading recommendations based on the given portfolio and the market conditions
     as of a given date.
@@ -281,7 +283,8 @@ def _process_buy_recommendations(
 
 def get_trading_dates(portfolio: Portfolio, max_days=1460):
     with Session() as session:
-        session.add(portfolio)
+        if object_session(portfolio) is None:
+            session.add(portfolio)
         last_date_stmt = text(
             """
         select max(recommendationdate) from tradingrecommendations where portfolioID = :portfolio_id
@@ -307,7 +310,7 @@ def get_trading_dates(portfolio: Portfolio, max_days=1460):
         return [row[0] for row in result]
 
 
-def reset_portfolio(portfolio: Portfolio):
+def reset_portfolio(portfolio: Portfolio, full=False):
     with Session() as session:
         session.add(portfolio)
         session.refresh(portfolio)
@@ -321,11 +324,18 @@ def reset_portfolio(portfolio: Portfolio):
             DELETE FROM Transactions where PortfolioID = :portfolio_id
             """
         )
-        del_cashtransactions = text(
-            """
-            DELETE FROM CashTransactions where PortfolioID = :portfolio_id and Description != :initial_deposit_description
-            """
-        )
+        if full:
+            del_cashtransactions = text(
+                """
+                DELETE FROM CashTransactions where PortfolioID = :portfolio_id
+                """
+            )
+        else:
+            del_cashtransactions = text(
+                """
+                DELETE FROM CashTransactions where PortfolioID = :portfolio_id and Description != :initial_deposit_description
+                """
+            )
         del_tradingrecommendations = text(
             """
             DELETE FROM TradingRecommendations where PortfolioID = :portfolio_id
@@ -334,6 +344,11 @@ def reset_portfolio(portfolio: Portfolio):
         del_lots = text(
             """
             DELETE FROM Lots where PortfolioID = :portfolio_id
+            """
+        )
+        del_portfolio_performance = text(
+            """
+            DELETE FROM portfolio_performance where Portfolio_ID = :portfolio_id
             """
         )
         session.execute(del_portfoliopositions, {"portfolio_id": portfolio.id})
@@ -347,6 +362,7 @@ def reset_portfolio(portfolio: Portfolio):
         )
         session.execute(del_tradingrecommendations, {"portfolio_id": portfolio.id})
         session.execute(del_lots, {"portfolio_id": portfolio.id})
+        session.execute(del_portfolio_performance, {"portfolio_id": portfolio.id})
 
         session.commit()
 
@@ -394,10 +410,16 @@ def exercise_strategy(portfolio: Portfolio, report=True):
     cache = CACHE
     cache.set_earliest_date(trading_dates[0])
 
-    # with Profiler(interval=0.001) as profiler:
-    for trade_date in trading_dates:
-        last_trade_date = trade_date
-        run_day(portfolio, trade_date, report=report)
+    with Session() as session:
+        # with Profiler(interval=0.001) as profiler:
+        for trade_date in trading_dates:
+            session.add(portfolio)
+            session.refresh(portfolio)
+            print(
+                f"Processing {trade_date} {portfolio.strategy} for id={portfolio.id}: {portfolio.name}"
+            )
+            last_trade_date = trade_date
+            run_day(portfolio, trade_date, report=report)
 
     # profiler.print()
     banked_cash = portfolio.bank_balance(last_trade_date)
@@ -410,6 +432,7 @@ def exercise_strategy(portfolio: Portfolio, report=True):
 
 def run_day(portfolio: Portfolio, trade_date, execute=True, report=True):
     recommendations = make_recommendations(portfolio, trade_date)
+    recommendations.sort(key=lambda x: x.strength, reverse=True)
     planned_actions = make_plan(portfolio, recommendations, trade_date)
 
     if execute:
@@ -427,6 +450,7 @@ def run_day(portfolio: Portfolio, trade_date, execute=True, report=True):
         cumulative_return(total_invested, banked_cash + total_value + cash) * 100
     )
     first_date = portfolio.first_transaction_like("%Reinvest/Bank%")
+    portfolio.record_performance(trade_date)
     portfolio.report_status(trade_date, complete_roi, first_date, report=report)
     return first_date
 
@@ -537,8 +561,8 @@ def parameter_search():
         p.wait()
 
 
-def initialize_portfolio(portfolio: Portfolio):
-    reset_portfolio(portfolio)
+def initialize_portfolio(portfolio: Portfolio, full=False):
+    reset_portfolio(portfolio, full)
 
 
 def main():

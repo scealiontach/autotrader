@@ -26,7 +26,7 @@ def fetch_products_from_db():
 
 
 def update_eod_data(product_id, symbol):
-    end_date = datetime.now().date()
+    end_date = (datetime.now() + timedelta(days=1)).date()
 
     last_recorded_date = get_last_recorded_date(product_id)
     if last_recorded_date:
