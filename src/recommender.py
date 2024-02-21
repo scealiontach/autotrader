@@ -1,3 +1,4 @@
+import logging as log
 from datetime import date, timedelta
 from decimal import Decimal
 from types import NoneType
@@ -223,7 +224,7 @@ class Recommender:
                 else:
                     return self._make_recommendation(HOLD, strategy, Decimal(0))
         except Exception as e:
-            print(f"(E03) An error occurred: {e}")
+            log.error(f"(E03) An error occurred: {e}")
             raise e
 
     def macd(self, short_span=9, mid_span=12, long_span=26):
@@ -258,7 +259,7 @@ class Recommender:
             else:
                 return self._make_recommendation(HOLD, strategy, Decimal(0))
         except Exception as e:
-            print(f"(E04) An error occurred: {e}")
+            log.error(f"(E04) An error occurred: {e}")
             raise e
 
     def buy_sma_sell_rsi(self, window=50, high=70, low=30):
@@ -407,7 +408,7 @@ class Recommender:
                     )
                     session.commit()
             except Exception as e:
-                print(f"(E05) Error inserting recommendation for {rec.symbol}: {e}")
+                log.error(f"(E05) Error inserting recommendation for {rec.symbol}: {e}")
                 session.rollback()
 
     def upmacd_downmr(self):

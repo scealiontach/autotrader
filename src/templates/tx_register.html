@@ -16,7 +16,7 @@
     </tr>
   </thead>
   <tbody>
-    {% for tx in transactions %}
+    {%- for tx in transactions  -%}
     <tr>
       <td>{{ tx.transaction_date }}</td>
       <td>{{ link_to_portfolio(tx.portfolio_id, tx.portfolio_id) }}</td>
@@ -26,7 +26,7 @@
       <td>{{ currency_fmt(tx.price) }}</td>
       <td>{{ currency_fmt(tx.quantity*tx.price) }}</td>
     </tr>
-    {% endfor %}
+    {%- endfor -%}
   </tbody>
 </table>
 <script>
@@ -46,4 +46,4 @@
   tf.init();
 </script>
 
-{% endblock content %}
+{%- endblock content %}

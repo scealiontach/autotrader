@@ -2,11 +2,11 @@
 {% from 'bootstrap5/form.html' import render_form %}
 {% import 'portfolio-form-dialog.j2' as pfd %}
 
-{%block title%}Portfolios{% endblock %}
+{%block title%}Portfolios{%- endblock %}
 
 {% block navbar %}
 {{ navlink(url_for('portfolios')+'/chart', 'Chart') }}
-{% endblock navbar%}
+{%- endblock navbar%}
 {% block styles %}
 <style>
 .mdl-dialog {
@@ -14,8 +14,8 @@
   height: 70%;
 }
 </style>
-{% endblock styles %}
-{% block content %}
+{%- endblock styles %}
+{% block content -%}
 {{ container() }}
 {{ pfd.btn('add-portfolio', 'Add Portfolio') }}
 {{ enddiv() }}
@@ -34,7 +34,7 @@
         </tr>
       </thead>
       <tbody>
-    {% for item in data %}
+    {%- for item in data  -%}
         <tr>
             <td class="mdl-data-table__cell--non-numeric">
               {{item.id}}
@@ -59,7 +59,7 @@
               {{ item.last_active }}
             </td>
             <td class="mdl-data-table__cell--non-numeric">
-              {% if item.is_active %}
+              {%- if item.is_active -%}
               <table>
                 <tr>
                   <td>
@@ -79,11 +79,11 @@
                   </td>
                 </tr>
               </table>
-              {% endif %}
+              {%- endif -%}
 
             </td>
           </tr>
-    {% endfor %}
+    {%- endfor -%}
       </tbody>
     </table>
     <script>
@@ -101,4 +101,4 @@
 {{ enddiv() }}
 {{ pfd.dialog('add-portfolio', form) }}
 
-{% endblock content %}
+{%- endblock content %}

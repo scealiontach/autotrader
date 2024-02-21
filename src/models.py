@@ -1,14 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import (
-    Date,
-    ForeignKey,
-    Integer,
-    String,
-    DECIMAL,
-    Text,
-)
+from sqlalchemy import DECIMAL, Date, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 

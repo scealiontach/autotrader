@@ -1,12 +1,14 @@
+import logging as log
 from decimal import Decimal
+
 import pandas as pd
+from cachetools import LFUCache
 from sqlalchemy import text
-from database import Session
-from product import Product
 
 from analyzer import ProductAnalyzer
 from constants import INDEX_SYMBOLS
-from cachetools import LFUCache
+from database import Session
+from product import Product
 
 market_cache = LFUCache(maxsize=1024)
 
@@ -57,7 +59,7 @@ class Market:
                 market_cache[cache_key] = False
                 return False
         except Exception as e:
-            print(f"(E08) An error occurred: {e}")
+            log.error(f"(E08) An error occurred: {e}")
             return False
 
     def rate_performance(self, first_day, roi: Decimal) -> int:

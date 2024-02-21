@@ -1,65 +1,59 @@
 
 
-{% macro items_to_rows(data,include_keys,exclude_keys) %}
-{% for key, value in data.items() %}
-{% if include_keys and key in include_keys %}
+{%- macro items_to_rows(data,include_keys,exclude_keys) -%}
+{%- for key, value in data.items()  -%}
+{%- if include_keys and key in include_keys -%}
 <tr>
-  {{ keycell(key | title)}}
-  {{ cell(value) }}
+  {{- keycell(key | title)}}{{ cell(value) -}}
 </tr>
 {% elif not include_keys and key not in exclude_keys %}
 <tr>
-  {{ keycell(key | title)}}
-  {{ cell(value) }}
+  {{- keycell(key | title)}}{{ cell(value) -}}
 </tr>
-{% endif %}
-{% endfor %}
+{%- endif -%}
+{%- endfor -%}
 {% endmacro %}
 
-{% macro items_to_numrows(data,fmt_string, include_keys,exclude_keys) %}
-{% for key, value in data.items() %}
-{% if include_keys and key in include_keys %}
+{%- macro items_to_numrows(data,fmt_string, include_keys,exclude_keys) -%}
+{%- for key, value in data.items()  -%}
+{%- if include_keys and key in include_keys -%}
 <tr>
-  {{ keycell(key | title)}}
-  {{ numcell(value, fmt_string) }}
+  {{- keycell(key | title)}}{{ numcell(value, fmt_string) -}}
 </tr>
-{% elif not include_keys and key not in exclude_keys %}
+{% elif not include_keys and key not in exclude_keys -%}
 <tr>
-  {{ keycell(key | title)}}
-  {{ numcell(value, fmt_string) }}
+  {{- keycell(key | title)}}{{ numcell(value, fmt_string) -}}
 </tr>
-{% endif %}
-{% endfor %}
+{%- endif -%}
+{%- endfor -%}
 {% endmacro %}
 
-{% macro items_to_pcrows(data,fmt_string, include_keys,exclude_keys) %}
-{% for key, value in data.items() %}
-{% if include_keys and key in include_keys %}
+{% macro items_to_pcrows(data,fmt_string, include_keys,exclude_keys) -%}
+{%- for key, value in data.items()  -%}
+{%- if include_keys and key in include_keys -%}
 <tr>
-  {{ keycell(key | title) }}
-  {{ percell(value,fmt_string) }}
+  {{- keycell(key | title) }}{{ percell(value,fmt_string) -}}
 </tr>
-{% elif not include_keys and key not in exclude_keys %}
+{% elif not include_keys and key not in exclude_keys -%}
 <tr>
-  {{ keycell(key | title)}}
-  {{ percell(value,fmt_string) }}
+  {{- keycell(key | title)}}{{ percell(value,fmt_string) -}}
 </tr>
-{% endif %}
-{% endfor %}
+{%- endif -%}
+{%- endfor -%}
 {% endmacro %}
 
-{% macro keycell(val) %}
+{% macro keycell(val) -%}
 <td class="mdl-data-table__cell--non-numeric"><b>{{ val }}</b></td>
-{% endmacro %}
+{%- endmacro %}
 
-{% macro cell(val) %}
-<td class="mdl-data-table__cell--non-numeric">{{ val }}</td>
-{% endmacro %}
+{%- macro cell(val, extra_classes) -%}
+<td class="mdl-data-table__cell--non-numeric {{extra_classes}}">{{ val }}</td>
+{%- endmacro %}
 
-{% macro numcell(val,fmt) %}
+{% macro numcell(val,fmt) -%}
 <td>{{ fmt | format(val) }}</td>
-{% endmacro %}
+{%- endmacro %}
 
-{% macro percell(val,fmt) %}
+{% macro percell(val,fmt) -%}
 <td>{{ fmt | format(val) }}%</td>
-{% endmacro %}
+{%- endmacro %}

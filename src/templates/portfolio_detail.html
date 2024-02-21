@@ -10,7 +10,7 @@
 {{ navlink(url_for('portfolios'), 'Portfolios') }}
 {{link_to_tx(portfolio.id, 'Orders')}}
 {{link_to_cashtx(portfolio.id, 'Cash')}}
-{% endblock navbar %}
+{%- endblock navbar %}
 
 {% block styles %}
 <style>
@@ -19,7 +19,7 @@
   height: 70%;
 }
 </style>
-{% endblock styles %}
+{%- endblock styles %}
 
 {% block content %}
 <div class="mdl-grid">
@@ -28,11 +28,11 @@
     <p>{{portfolio.description}}</p>
     <table>
       <tr>
-      {% if portfolio.is_active %}
+      {%- if portfolio.is_active -%}
         <td><form action="/portfolios/{{portfolio.id}}/simulate" method="get">
           <button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Simulate</button>
         </form></td>
-      {% endif %}
+      {%- endif -%}
         <td><form action="/portfolios/{{portfolio.id}}/reset" method="get">
           <button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Reset</button>
         </form></td>
@@ -77,7 +77,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for recommendation in portfolio.active_recommendations %}
+        {%- for recommendation in portfolio.active_recommendations  -%}
           <tr>
             <td>{{ link_to_symbol(recommendation.symbol) }}</td>
             <td>{{ recommendation.action }}</td>
@@ -85,7 +85,7 @@
             <td>{{ recommendation.strategy }}</td>
             <td>{{ "%3.3f" | format(recommendation.strength) }}</td>
           </tr>
-        {% endfor %}
+        {%- endfor -%}
       </tbody>
     </table>
   </div>
@@ -104,7 +104,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for position in positions %}
+        {%- for position in positions  -%}
           <tr>
             <td>{{link_to_product(position.product_id, position.symbol)}}</td>
             <td>{{ position.recommendation }}</td>
@@ -114,12 +114,12 @@
             <td>{{position.purchasedate}}</td>
             <td>{{link_to_position(position.id, 'Details')}}</td>
           </tr>
-        {% endfor %}
+        {%- endfor -%}
       </tbody>
     </table>
   </div>
 </div>
 {{ chart.chart('chart',graphJSON) }}
 {{ pfdialog.dialog('edit-portfolio', form) }}
-{% endblock content %}
+{%- endblock content %}
 ```

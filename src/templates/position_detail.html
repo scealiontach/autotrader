@@ -33,7 +33,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for lot in lots %}
+        {%- for lot in lots  -%}
           <tr>
             <td>{{ link_to_lot(lot.id,lot.id) }}</td>
             <td class="mdl-data-table__cell--non-numeric">{{link_to_product(position.product_id, position.symbol)}}</td>
@@ -42,9 +42,9 @@
             <td class="mdl-data-table__cell--non-numeric">{{lot.purchasedate}}</td>
             <td>{{currency_fmt(lot.purchaseprice * lot.quantity)}}</td>
           </tr>
-        {% endfor %}
+        {%- endfor -%}
       </tbody>
     </table>
   </div>
 </div>
-{% endblock content%}
+{%- endblock content%}

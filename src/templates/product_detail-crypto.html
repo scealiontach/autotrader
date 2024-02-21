@@ -2,9 +2,9 @@
 
 {%block title%}Product Detail{%endblock%}
 
-{% macro gf_crypto_link(symbol)%}https://www.google.com/finance/quote/{{symbol}}{% endmacro %}
-{% macro yf_crypto_link(symbol)%}https://finance.yahoo.com/quote/{{symbol}}{% endmacro %}
-{% macro binance_cchart_link(symbol)%}https://www.binance.us/spot-trade/{{symbol[0:-4]}}_usdt{% endmacro %}
+{%- macro gf_crypto_link(symbol)%}https://www.google.com/finance/quote/{{symbol}}{% endmacro -%}
+{%- macro yf_crypto_link(symbol)%}https://finance.yahoo.com/quote/{{symbol}}{% endmacro -%}
+{%- macro binance_cchart_link(symbol)%}https://www.binance.us/spot-trade/{{symbol[0:-4]}}_usdt{% endmacro -%}
 
 {% block content %}
 
@@ -31,14 +31,14 @@
           </tr>
         </thead>
         <tbody>
-          {% for rec in stock_data.recommendations %}
+          {%- for rec in stock_data.recommendations  -%}
           <tr>
             <td>{{ link_to_portfolio(rec.portfolio_id, rec.portfolio_id) }}</td>
             <td>{{rec.strategy}}</td>
             <td>{{rec.action}}</td>
             <td>{{rec.recommendation_date}}</td>
           </tr>
-          {% endfor %}
+          {%- endfor -%}
         </tbody>
       </table>
   </div>
@@ -53,4 +53,4 @@
 <div>
   <iframe frameborder='0' noresize='noresize' style='position: absolute; background: transparent; width: 100%; height:100%;' src="{{ binance_cchart_link(stock_data.symbol) }}" frameborder="0"></iframe>
 </div>
-{% endblock content %}
+{%- endblock content %}

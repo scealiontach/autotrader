@@ -1,3 +1,4 @@
+import logging as log
 import sys
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -5,9 +6,7 @@ from types import NoneType
 from typing import Optional, Union
 
 import pandas as pd
-
 from cachetools import LFUCache, TTLCache
-from models import Base, TradingRecommendation
 from numpy import divide
 from sqlalchemy import (
     DECIMAL,
@@ -28,6 +27,7 @@ from analyzer import cumulative_return
 from constants import BUY, BUY_TX_FEE, SELL, SELL_TX_FEE
 from database import Session
 from market import Market
+from models import Base, TradingRecommendation
 from product import Product
 from recommender import Recommendation, Recommender
 from reporting import csv_log
@@ -873,7 +873,7 @@ class Portfolio(Base):
 
                 session.commit()  # Commit the transaction
         except Exception as e:
-            print(f"An error occurred: {e}")
+            log.error(f"An error occurred: {e}")
 
     def current_balances(self):
         cash = self.cash_balance(self.last_active())

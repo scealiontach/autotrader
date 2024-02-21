@@ -5,9 +5,9 @@
 
 {% block navbar %}
 {{ navlink(url_for('portfolios'), 'Portfolios') }}
-{% endblock navbar%}
+{%- endblock navbar%}
 
 {% block content %}
 {{ chart.chart('chart', graphJSON) }}
-{% endblock content %}
+{%- endblock content %}
 ```

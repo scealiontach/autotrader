@@ -1,16 +1,14 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
-from functools import lru_cache
 from types import NoneType
 from typing import Optional, Union
 
+from cachetools import LFUCache
+from sqlalchemy import DECIMAL, JSON, Boolean, Date, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from cachetools import LFUCache
-from models import Base, TradingRecommendation
-from sqlalchemy import DECIMAL, JSON, Boolean, Date, Integer, String, text
-
 from database import Session
+from models import Base, TradingRecommendation
 
 product_cache = LFUCache(maxsize=4096)
 

@@ -1,24 +1,24 @@
-from datetime import datetime, timedelta
 import itertools
+import logging as log
 import math
 import subprocess
 import sys
 import time
 import warnings
+from datetime import datetime, timedelta
 from decimal import Decimal
-
-from sqlalchemy.orm import object_session
-from product import Product
 
 import psutil
 from pyinstrument import Profiler
 from sqlalchemy import text, update
+from sqlalchemy.orm import object_session
 
 from analyzer import cumulative_return
 from constants import BUY, HOLD, REQUIRED_HOLDING_DAYS, SELL
 from database import Session
 from market_data_cache import CACHE
 from portfolio import Portfolio, portfolio_for_name
+from product import Product
 from recommender import STRATEGIES, Action, Recommendation
 from reporting import csv_log
 from utils import round_down
@@ -204,11 +204,11 @@ def _process_sell_recommendations(
             met_holding = True
 
         if rec.last is None:
-            print(f"Last price is None for {symbol}")
+            log.warning(f"Last price is None for {symbol}")
             continue
         if rec.action == SELL and current_quantity > 0:
             if not met_holding:
-                print(f"Position {symbol} does not meet holding period")
+                log.debug(f"Position {symbol} does not meet holding period")
                 continue
             shares_to_sell = current_quantity
             if shares_to_sell > 0 and shares_to_sell <= current_quantity:
@@ -415,7 +415,7 @@ def exercise_strategy(portfolio: Portfolio, report=True):
         for trade_date in trading_dates:
             session.add(portfolio)
             session.refresh(portfolio)
-            print(
+            log.info(
                 f"Processing {trade_date} {portfolio.strategy} for id={portfolio.id}: {portfolio.name}"
             )
             last_trade_date = trade_date
@@ -497,7 +497,7 @@ LOCAL_STRATEGIES = STRATEGIES
 
 def parameter_search():
     # with Profiler(interval=0.1) as profiler:
-    print("Executing parameter search")
+    log.info("Executing parameter search")
     initial_combinations = itertools.product(
         RESERVE_CASH_RANGE,
         REINVEST_PERIOD_RANGE,
@@ -540,7 +540,7 @@ def parameter_search():
         # Configure logging for 'sqlalchemy.engine' to output at the INFO level
 
         portfolio = portfolio_for_name(name)
-        print(f"Testing parameters {combination}")
+        log.info(f"Testing parameters {combination}")
 
         pipe = subprocess.Popen(
             [

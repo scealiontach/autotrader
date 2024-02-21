@@ -1,5 +1,8 @@
+import logging as log
+
 import pandas as pd
 from sqlalchemy import text
+
 from database import Session
 
 

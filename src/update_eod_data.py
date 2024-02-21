@@ -1,7 +1,7 @@
+import logging as log
 import warnings
 from datetime import datetime, timedelta
 
-import requests
 import yfinance as yf
 from sqlalchemy import text
 
@@ -39,7 +39,6 @@ def update_eod_data(product_id, symbol):
             days=5 * 365
         )  # Default to last 365 days if no record exists
 
-    # print(f"Fetching data for {symbol} {start_date} to {end_date}...")
     stock = yf.Ticker(symbol)
     hist = stock.history(start=start_date, end=end_date)
 
@@ -130,7 +129,7 @@ def compute_advance_decline_table():
             session.execute(statement)
             session.commit()
     except Exception as e:
-        print(f"(E06) An error occurred: {e}")
+        log.error(f"(E06) An error occurred: {e}")
 
 
 def get_last_recorded_date(product_id):
@@ -148,7 +147,7 @@ def get_last_recorded_date(product_id):
 
 
 def update():
-    print("Updating market data...")
+    log.info("Updating market data...")
     products = list(fetch_products_from_db())
     # sort products by symbol
     products.sort(key=lambda x: x[1])
@@ -164,7 +163,9 @@ def update():
                 earliest = first
             if last and last > latest:
                 latest = last
-    print(f"Equity market data fetched Earliest date: {earliest} Latest date: {latest}")
+    log.info(
+        f"Equity market data fetched Earliest date: {earliest} Latest date: {latest}"
+    )
 
     compute_advance_decline_table()
 

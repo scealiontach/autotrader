@@ -1,5 +1,6 @@
 from decimal import Decimal
-from os import close
+
+import wtforms
 from dateutil.utils import today
 from flask_wtf import FlaskForm
 from wtforms import (
@@ -11,7 +12,6 @@ from wtforms import (
     TextAreaField,
 )
 from wtforms.validators import DataRequired, Length
-import wtforms
 
 from recommender import STRATEGIES
 
@@ -78,6 +78,18 @@ class EditPortfolioForm(FlaskForm):
     submit = SubmitField("Submit")
 
 
+class DeletePortfolioForm(FlaskForm):
+    submit = SubmitField("Delete")
+
+
+class SimulatePortfolioForm(FlaskForm):
+    submit = SubmitField("Simulate")
+
+
+class ResetPortfolioForm(FlaskForm):
+    submit = SubmitField("Reset")
+
+
 class CashTransactionForm(FlaskForm):
     amount = DecimalField(
         "Amount", validators=[DataRequired()], places=2, default=Decimal(0)
@@ -87,3 +99,19 @@ class CashTransactionForm(FlaskForm):
         "Description", validators=[DataRequired(), Length(3, 200)]
     )
     submit = SubmitField("Submit")
+
+
+class BuyOrderForm(FlaskForm):
+    symbol = StringField("Symbol", validators=[DataRequired(), Length(3, 10)])
+    quantity = IntegerField("Quantity", validators=[DataRequired()], default=100)
+    date = wtforms.DateField("Date", validators=[DataRequired()], default=today())
+    price = wtforms.DecimalField("Price", validators=[DataRequired()], places=2)
+    submit = SubmitField("Buy")
+
+
+class SellOrderForm(FlaskForm):
+    symbol = StringField("Symbol", validators=[DataRequired(), Length(3, 10)])
+    quantity = IntegerField("Quantity", validators=[DataRequired()], default=100)
+    date = wtforms.DateField("Date", validators=[DataRequired()], default=today())
+    price = wtforms.DecimalField("Price", validators=[DataRequired()], places=2)
+    submit = SubmitField("Sell")

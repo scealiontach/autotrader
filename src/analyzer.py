@@ -1,4 +1,4 @@
-import signal
+import logging as log
 import statistics
 from datetime import timedelta
 from decimal import Decimal
@@ -76,7 +76,7 @@ class ProductAnalyzer:
                 else:
                     return None
         except Exception as e:
-            print(f"(E01) An error occurred: {e}")
+            log.error(f"(E01) An error occurred: {e}")
             return None
 
     def vwap(self, window=200) -> Union[Decimal, None]:
@@ -174,7 +174,7 @@ class ProductAnalyzer:
 
                 return rsi
         except Exception as e:
-            print(f"(E02) An error occurred: {e}")
+            log.error(f"(E02) An error occurred: {e}")
             return None
 
     def engulfing(self):
@@ -232,7 +232,7 @@ class ProductAnalyzer:
                     else:
                         return 0  # No Engulfing pattern
         except Exception as e:
-            print(f"An error occurred: {e}")
+            log.error(f"An error occurred: {e}")
             return None
 
     def breakout(self, breakout_window=20):

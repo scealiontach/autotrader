@@ -1,4 +1,5 @@
 import json
+import logging as log
 from datetime import datetime, timedelta
 
 import requests
@@ -6,7 +7,6 @@ import yfinance as yf
 from bs4 import BeautifulSoup, Tag
 from sqlalchemy import text
 
-import update_eod_data
 from constants import INDEX_SYMBOLS
 from database import Session
 
@@ -55,9 +55,9 @@ def fetch_sp500_symbols_wikipedia(
 
         return symbols
     except requests.RequestException as e:
-        print(f"Request failed: {e}")
+        log.error(f"Request failed: {e}")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        log.error(f"An error occurred: {e}")
 
     return []  # Return an empty list in case of failure
 
@@ -92,9 +92,9 @@ def fetch_dji_symbols_wikipedia(
 
         return symbols
     except requests.RequestException as e:
-        print(f"Request failed: {e}")
+        log.error(f"Request failed: {e}")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        log.error(f"An error occurred: {e}")
 
     return []  # Return an empty list in case of failure
 
@@ -128,9 +128,9 @@ def fetch_nasdaq100_symbols_wikipedia(
 
         return symbols
     except requests.RequestException as e:
-        print(f"Request failed: {e}")
+        log.error(f"Request failed: {e}")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        log.error(f"An error occurred: {e}")
 
     return []  # Return an empty list in case of failure
 
@@ -202,7 +202,7 @@ def insert_product_into_db(product_info, active=True):
             },
         )
         session.commit()
-        print(f"Inserted {product_info['symbol']} into the database.")
+        log.info(f"Inserted {product_info['symbol']} into the database.")
 
 
 # get the the row from the products table corresponding to the symbol

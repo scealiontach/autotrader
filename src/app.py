@@ -1,16 +1,17 @@
-# from constants import DATABASE_URL
 import json
 import secrets
-import threading
 from datetime import date
 from decimal import Decimal
+import logging as log
 
 import pandas as pd
 import plotly
 import plotly.express as px
-from apscheduler.executors.pool import ThreadPoolExecutor, ProcessPoolExecutor
+from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.background import BackgroundScheduler
+from sqlalchemy.sql.functions import now
+import psutil
 from dateutil.utils import today
 from flask import Flask, g, jsonify, redirect, render_template, request, url_for
 from flask_bootstrap import Bootstrap5
@@ -29,9 +30,14 @@ from portfolio import Lot, Portfolio, Position
 from product import Product
 from recommender import STRATEGIES
 
+max_processes = psutil.cpu_count(logical=False) or 1
+max_processes = max_processes - 1
+max_processes = max(max_processes, 1)
+
 jobstores = {"default": SQLAlchemyJobStore(url=DATABASE_URL)}
 executors = {
-    "default": ProcessPoolExecutor(9),
+    "default": ThreadPoolExecutor(9),
+    "external": ThreadPoolExecutor(1),
 }
 job_defaults = {"coalesce": False, "max_instances": 1}
 scheduler = BackgroundScheduler(
@@ -46,6 +52,19 @@ app.secret_key = token
 Material(app)
 bootstrap = Bootstrap5(app)
 csrf = CSRFProtect(app)
+
+
+def is_api_request(request):
+    return "fmt" in request.args and request.args["fmt"] == "json"
+
+
+@scheduler.scheduled_job(
+    "cron", executor="external", max_instances=1, coalesce=True, minute="*/10"
+)
+def update_market_data():
+    log.info("Market data update begins")
+    update_eod_data.update()
+    log.info("Market data update complete")
 
 
 @app.before_request
@@ -63,15 +82,9 @@ def home():
     return render_template("home.html")
 
 
-def is_api_request(request):
-    return "fmt" in request.args and request.args["fmt"] == "json"
-
-
-@app.route("/update", methods=["POST"])
-def update():
-    bg_thread = threading.Thread(target=update_eod_data.update)
-    bg_thread.start()
-    return redirect(f"/")
+COL_CUMULATIVE_RETURN = ".cum_ret"
+COL_PCT_CHANGE_DAILY = ".pct_change_daily"
+COL_CLOSE = ".close"
 
 
 @app.route("/portfolios/chart", methods=["GET"])
@@ -81,7 +94,7 @@ def portfolios_chart():
     )
     df = None
 
-    graph_col = ".cum_ret"
+    graph_col = COL_CUMULATIVE_RETURN
     last_active = None
     y_cols = []
     for p in portfolios:
@@ -89,11 +102,17 @@ def portfolios_chart():
         if len(pf_df) <= 0:
             continue
         y_cols.append(str(p.id) + graph_col)
-        pf_df[str(p.id) + ".pct_change_daily"] = pf_df["total"].pct_change()
-        pf_df[str(p.id) + ".cum_ret"] = (
-            1 + pf_df[str(p.id) + ".pct_change_daily"]
+        pf_df[str(p.id) + COL_PCT_CHANGE_DAILY] = pf_df["total"].pct_change()
+        pf_df[str(p.id) + COL_CUMULATIVE_RETURN] = (
+            1 + pf_df[str(p.id) + COL_PCT_CHANGE_DAILY]
         ).cumprod() - 1
-        pf_df = pf_df[["date", str(p.id) + ".cum_ret", str(p.id) + ".pct_change_daily"]]
+        pf_df = pf_df[
+            [
+                "date",
+                str(p.id) + COL_CUMULATIVE_RETURN,
+                str(p.id) + COL_PCT_CHANGE_DAILY,
+            ]
+        ]
         if df is None:
             df = pf_df
         else:
@@ -109,13 +128,13 @@ def portfolios_chart():
         y_cols.append(product.symbol + graph_col)
         index_df = CACHE.get_data(product.id, date(1901, 1, 1), last_active)
         index_df.rename(
-            columns={"closingprice": product.symbol + ".close"}, inplace=True
+            columns={"closingprice": product.symbol + COL_CLOSE}, inplace=True
         )
-        index_df[product.symbol + ".pct_change_daily"] = index_df[
-            product.symbol + ".close"
+        index_df[product.symbol + COL_PCT_CHANGE_DAILY] = index_df[
+            product.symbol + COL_CLOSE
         ].pct_change()
-        index_df[product.symbol + ".cum_ret"] = (
-            1 + index_df[product.symbol + ".pct_change_daily"]
+        index_df[product.symbol + COL_CUMULATIVE_RETURN] = (
+            1 + index_df[product.symbol + COL_PCT_CHANGE_DAILY]
         ).cumprod() - 1
         if df is None:
             df = index_df
@@ -155,6 +174,7 @@ def portfolios():
         portfolio.sectors_forbidden = sectors_forbidden  # type: ignore
         portfolio.dividend_only = False
         portfolio.is_active = form.is_active.data
+        log.info(f"Adding portfolio {portfolio.name}")
         g.db_session.add(portfolio)
         g.db_session.commit()
         return redirect(url_for("portfolio_detail", portfolio_id=portfolio.id))
@@ -203,11 +223,11 @@ def portfolio_detail(portfolio_id):
         portfolio.bank_pc = form.bank_pc.data  # type: ignore
         portfolio.max_exposure = form.max_exposure.data  # type: ignore
         portfolio.strategy = STRATEGIES[int(form.strategy.data)]  # type: ignore
-        print(portfolio.strategy)
         portfolio.sectors_allowed = sectors_allowed  # type: ignore
         portfolio.sectors_forbidden = sectors_forbidden  # type: ignore
         portfolio.dividend_only = False
         portfolio.is_active = form.is_active.data
+        log.info(f"Updating portfolio {portfolio.id}/{portfolio.name}")
         g.db_session.add(portfolio)
         g.db_session.commit()
         return redirect(url_for("portfolio_detail", portfolio_id=portfolio.id))
@@ -224,20 +244,20 @@ def portfolio_detail(portfolio_id):
 
             df = None
             pf_df = portfolio.get_performance()
-            graph_col = ".cum_ret"
+            graph_col = COL_CUMULATIVE_RETURN
             y_cols = []
             if len(pf_df) > 0:
-                pf_df[str(portfolio.id) + ".pct_change_daily"] = pf_df[
+                pf_df[str(portfolio.id) + COL_PCT_CHANGE_DAILY] = pf_df[
                     "total"
                 ].pct_change()
-                pf_df[str(portfolio.id) + ".cum_ret"] = (
-                    1 + pf_df[str(portfolio.id) + ".pct_change_daily"]
+                pf_df[str(portfolio.id) + COL_CUMULATIVE_RETURN] = (
+                    1 + pf_df[str(portfolio.id) + COL_PCT_CHANGE_DAILY]
                 ).cumprod() - 1
                 pf_df = pf_df[
                     [
                         "date",
-                        str(portfolio.id) + ".cum_ret",
-                        str(portfolio.id) + ".pct_change_daily",
+                        str(portfolio.id) + COL_CUMULATIVE_RETURN,
+                        str(portfolio.id) + COL_PCT_CHANGE_DAILY,
                     ]
                 ]
                 y_cols.append(str(portfolio.id) + graph_col)
@@ -252,13 +272,13 @@ def portfolio_detail(portfolio_id):
                 if len(index_df) <= 0:
                     continue
                 index_df.rename(
-                    columns={"closingprice": product.symbol + ".close"}, inplace=True
+                    columns={"closingprice": product.symbol + COL_CLOSE}, inplace=True
                 )
-                index_df[product.symbol + ".pct_change_daily"] = index_df[
-                    product.symbol + ".close"
+                index_df[product.symbol + COL_PCT_CHANGE_DAILY] = index_df[
+                    product.symbol + COL_CLOSE
                 ].pct_change()
-                index_df[product.symbol + ".cum_ret"] = (
-                    1 + index_df[product.symbol + ".pct_change_daily"]
+                index_df[product.symbol + COL_CUMULATIVE_RETURN] = (
+                    1 + index_df[product.symbol + COL_PCT_CHANGE_DAILY]
                 ).cumprod() - 1
                 if df is None:
                     df = index_df
@@ -283,16 +303,25 @@ def portfolio_detail(portfolio_id):
         return jsonify({"message": "Portfolio not found"}), 404
 
 
-@app.route("/portfolios/<int:portfolio_id>/simulate", methods=["GET"])
+@app.route("/portfolios/<int:portfolio_id>", methods=["DELETE"])
+def delete_portfolio(portfolio_id):
+    portfolio = g.db_session.query(Portfolio).get(portfolio_id)
+    if portfolio:
+        g.db_session.delete(portfolio)
+        g.db_session.commit()
+        return jsonify({"message": "Portfolio deleted successfully"})
+    return jsonify({"message": "Portfolio not found"}), 404
+
+
+@app.route("/portfolios/<int:portfolio_id>/simulate", methods=["POST"])
 def portfolio_simulate(portfolio_id):
     portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
     if not portfolio.is_active:
         return redirect(request.referrer)
-    scheduler.print_jobs()
     job_id = f"simulate_{portfolio_id}"
     job = scheduler.get_job(job_id)
     if job:
-        print(f"Job {job_id} already exists")
+        log.warning(f"Job {job_id} already exists")
     else:
         scheduler.add_job(
             exercise_strategy,
@@ -304,7 +333,7 @@ def portfolio_simulate(portfolio_id):
     return jsonify({"message": "Portfolio not found"}), 404
 
 
-@app.route("/portfolios/<int:portfolio_id>/reset", methods=["GET"])
+@app.route("/portfolios/<int:portfolio_id>/reset", methods=["POST"])
 def portfolio_reset(portfolio_id):
     portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
     if portfolio:
@@ -332,16 +361,6 @@ def get_portfolio_recommendations(portfolio_id):
     )
     result_data = [r.as_dict() for r in result]
     return jsonify(result_data)
-
-
-@app.route("/portfolios/<int:portfolio_id>", methods=["DELETE"])
-def delete_portfolio(portfolio_id):
-    portfolio = g.db_session.query(Portfolio).get(portfolio_id)
-    if portfolio:
-        g.db_session.delete(portfolio)
-        g.db_session.commit()
-        return jsonify({"message": "Portfolio deleted successfully"})
-    return jsonify({"message": "Portfolio not found"}), 404
 
 
 @app.route("/portfolios/<int:portfolio_id>/transactions", methods=["GET"])

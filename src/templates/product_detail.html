@@ -2,10 +2,10 @@
 
 {%block title%}Product Detail{%endblock%}
 
-{% macro yf_link(symbol)%}https://finance.yahoo.com/quote/{{symbol}}{% endmacro %}
-{% macro gf_link(market,symbol)%}https://www.google.com/finance/quote/{{symbol}}:{{market}}{% endmacro %}
-{% macro yf_news_link(symbol)%}https://finance.yahoo.com/quote/{{symbol}}/news{% endmacro %}
-{% macro yf_chart_link(symbol)%}https://finance.yahoo.com/chart/{{symbol}}{% endmacro %}
+{%- macro yf_link(symbol)%}https://finance.yahoo.com/quote/{{symbol}}{% endmacro -%}
+{%- macro gf_link(market,symbol)%}https://www.google.com/finance/quote/{{symbol}}:{{market}}{% endmacro -%}
+{%- macro yf_news_link(symbol)%}https://finance.yahoo.com/quote/{{symbol}}/news{% endmacro -%}
+{%- macro yf_chart_link(symbol)%}https://finance.yahoo.com/chart/{{symbol}}{% endmacro -%}
 
 {% block content %}
 
@@ -37,14 +37,14 @@
           </tr>
         </thead>
         <tbody>
-          {% for rec in stock_data.recommendations %}
+          {%- for rec in stock_data.recommendations  -%}
             <tr>
             <td>{{ link_to_portfolio(rec.portfolio_id, rec.portfolio_id) }}</td>
             <td>{{rec.strategy}}</td>
             <td>{{rec.action}}</td>
             <td>{{rec.recommendation_date}}</td>
           </tr>
-          {% endfor %}
+          {%- endfor -%}
         </tbody>
       </table>
   </div>
@@ -56,4 +56,4 @@
   </div>
 </div>
 
-{% endblock content %}
+{%- endblock content %}
