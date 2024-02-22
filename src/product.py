@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import NoneType
 from typing import Optional, Union
@@ -99,7 +99,7 @@ class Product(Base):
                 ret.append(d)
             return ret
 
-    def fetch_last_closing_price(self, as_of_date) -> Union[Decimal, NoneType]:
+    def fetch_last_closing_price(self, as_of_date: date) -> Union[Decimal, NoneType]:
         """
         Fetch the last closing price for a given product as of or before a given day.
 

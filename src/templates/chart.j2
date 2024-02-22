@@ -1,10 +1,12 @@
 
 
 {%- macro chart(id,graphJSON) -%}
+{%- if graphJSON is not none -%}
 <div id='{{id}}'>
 </div>
 <script type='text/javascript'>
   var graphs = {{graphJSON | safe}};
   Plotly.plot({{id}},graphs,{});
 </script>
-{% endmacro %}
+{%- endif -%}
+{%- endmacro -%}

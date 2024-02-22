@@ -1,9 +1,9 @@
 import logging as log
 import statistics
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Union
-
+from market_data_cache import CACHE
 from sqlalchemy import text
 
 from database import Session
@@ -31,7 +31,7 @@ class ProductAnalyzer:
         self.product = product
         self.end_date = end_date
 
-    def cum_return(self, start_date) -> Union[Decimal, None]:
+    def cum_return(self, start_date: date) -> Union[Decimal, None]:
         in_price = self.product.fetch_last_closing_price(start_date)
         out_price = self.product.fetch_last_closing_price(self.end_date)
         if in_price is None or out_price is None:
@@ -89,26 +89,25 @@ class ProductAnalyzer:
         """
         start_date = self.end_date - timedelta(days=window)
         vwap = None
-        with Session() as session:
-            statement = text(
-                """
-                SELECT SUM(ClosingPrice * Volume) / SUM(Volume) AS VWAP
-                FROM MarketData
-                JOIN Products ON MarketData.ProductID = Products.ProductID
-                WHERE Symbol = :symbol AND Date BETWEEN :start_date AND :end_date
-            """
-            )
-            result = session.execute(
-                statement,
-                {
-                    "symbol": self.product.symbol,
-                    "start_date": start_date,
-                    "end_date": self.end_date,
-                },
-            ).first()
-            if result:
-                vwap = result[0]
-        return vwap
+        # Filter the DataFrame for the desired date range
+        df = CACHE.get_data(self.product.id, start_date, self.end_date)
+
+        # Check if DataFrame is empty
+        if df.empty:
+            return None
+
+        # Calculate the VWAP
+        numerator = (df["closingprice"] * df["volume"]).sum()
+        denominator = df["volume"].sum()
+
+        # Check for divide by zero scenario
+        if denominator == 0:
+            return None
+
+        vwap = numerator / denominator
+
+        # Return the result as a Decimal
+        return Decimal(vwap)
 
     def rsi(self, window=14) -> Union[Decimal, None]:
         """

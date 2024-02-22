@@ -1,23 +1,23 @@
 {% extends 'base.html' %}
 {% from 'bootstrap5/form.html' import render_form %}
 {% import 'portfolio-form-dialog.j2' as pfd %}
+{% import 'infobox.j2' as infobox %}
 
 {%block title%}Portfolios{%- endblock %}
 
 {% block navbar %}
-{{ navlink(url_for('portfolios')+'/chart', 'Chart') }}
 {%- endblock navbar%}
 {% block styles %}
 <style>
 .mdl-dialog {
-  width: 80%;
+  width: 20%;
   height: 70%;
 }
 </style>
 {%- endblock styles %}
 {% block content -%}
 {{ container() }}
-{{ pfd.btn('add-portfolio', 'Add Portfolio') }}
+{{ pfd.btn('add_portfolio', 'Add Portfolio') }}
 {{ enddiv() }}
 {{ container() }}
     <table id="portfolio_list" class="mdl-data-table mdl-js-data-table mdl-shadow--2dp table-filter">
@@ -28,6 +28,7 @@
           <th class="mdl-data-table__cell--non-numeric">Strategy</th>
           <th class="mdl-data-table__cell--non-numeric">Invest</th>
           <th class="mdl-data-table__cell--non-numeric">Total</th>
+          <th class="mdl-data-table__cell--non-numeric">Sharpe Ratio</th>
           <th class="mdl-data-table__cell--non-numeric">ROI</th>
           <th class="mdl-data-table__cell--non-numeric">Last Active</th>
           <th class="mdl-data-table__cell--non-numeric">Actions</th>
@@ -51,10 +52,8 @@
             <td>
               {{ currency_fmt(item.value+item.cash+item.bank) }}
             </td>
-            <td>
-              {{ perc_fmt(item.roi) }}
-            </td>
-
+            {{ infobox.signal_cell(item.sharpe_ratio,"%4.4f",low=0, high=1) }}
+            {{ infobox.gradient_cell(item.roi, "%4.2f", low_thresholds=[-60,-50,-40,-30,-20,-10]) }}
             <td class="mdl-data-table__cell--non-numeric">
               {{ item.last_active }}
             </td>
@@ -63,19 +62,21 @@
               <table>
                 <tr>
                   <td>
-                    <form action="/portfolios/{{item.id}}/simulate" method="get">
-                      <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">play_arrow</i></button>
+                    <form action="{{url_for('portfolio_simulate',portfolio_id=item.id)}}" method="post">
+                      {{ sim_form.csrf_token }}
+                      {{ play_button() }}
                     </form>
                   </td>
                   <td>
-                    <form action="/portfolios/{{item.id}}/reset" method="get">
-                      <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">restore</i></button>
+                    <form action="{{url_for('portfolio_reset',portfolio_id=item.id)}}" method="post">
+                      {{ reset_form.csrf_token }}
+                      {{ restore_button() }}
                     </form>
                   </td>
                   <td>
-                    <form action="/portfolios/{{item.id}}/invest" method="get">
-                      <button class="mdl-button mdl-js-button mdl-button--icon"><i class="material-icons">paid</i></button>
-                    </form>
+                    {{container()}}
+                      {{ icon_button_id('invest_portfolio_'+(item.id|string), 'paid') }}
+                    {{ enddiv() }}
                   </td>
                 </tr>
               </table>
@@ -90,7 +91,7 @@
       var tf = new TableFilter('portfolio_list', {
         base_path: '{{tf_path()}}',
         col_2: 'select',
-        col_types: ['number', 'string', 'string','number', 'number', 'number', 'string'],
+        col_types: ['number', 'string', 'string','number', 'number', 'number', 'number', 'string'],
         extensions: [{
           name: 'sort',
           images_path: '{{tf_path()}}style/themes/'
@@ -99,6 +100,10 @@
       tf.init();
     </script>
 {{ enddiv() }}
-{{ pfd.dialog('add-portfolio', form) }}
+{{ pfd.dialog('add_portfolio', add_form, url_for('portfolio_add')) }}
+
+{%- for item in data  -%}
+{{ pfd.dialog('invest_portfolio_'+(item.id|string), invest_form, url_for('portfolio_invest',portfolio_id=item.id), 'Invest in '+item.name) }}
+{%- endfor -%}
 
 {%- endblock content %}

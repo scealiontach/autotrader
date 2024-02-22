@@ -1,29 +1,35 @@
 {%- from 'bootstrap5/form.html' import render_form %}
 {%- from 'base.html' import container, enddiv %}
-{%- macro dialog(id, form) -%}
+{%- macro dialog(id, form, target, title) -%}
+{{- begin_dialog(id,title) -}}
+  {{- render_form(form,action=target) -}}
+{{- end_dialog(id) -}}
+{%- endmacro -%}
+
+{%- macro begin_dialog(id,title) -%}
 {{- container() -}}
-  <dialog id="{{id}}-dialog" class="mdl-dialog">
-    <h4 class="mdl-dialog__title">Add Portfolio</h4>
-    <div class="mdl-dialog__content">
-    </div>
+  <dialog id="{{id | replace("-", "_")}}_dialog" class="mdl-dialog">
+    <h4 class="mdl-dialog__title">{{title}}</h4>
+    <div class="mdl-dialog__content"></div>
     <div class="mdl-dialog__actions mdl-dialog__actions--full-width">
-      {{- render_form(form) -}}
+{%- endmacro -%}
+
+{%- macro end_dialog(id) -%}
     </div>
   </dialog>
-
   <script>
-    var dialog = document.querySelector('#{{id}}-dialog');
-    var showDialogButton = document.querySelector('#{{id}}');
-    if (! dialog.showModal) {
+    var dialog_{{id | replace("-", "_")}} = document.querySelector('#{{id | replace("-", "_")}}_dialog');
+    var showDialogButton_{{id | replace("-", "_")}} = document.querySelector('#{{id | replace("-", "_")}}');
+    if (! dialog_{{id | replace("-", "_")}}.showModal) {
       dialogPolyfill.registerDialog(dialog);
     }
-    showDialogButton.addEventListener('click', function() {
-      dialog.showModal();
+    showDialogButton_{{id | replace("-", "_")}}.addEventListener('click', function() {
+      dialog_{{id | replace("-", "_")}}.showModal();
     });
   </script>
 {{- enddiv() -}}
-{%- endmacro %}
+{%- endmacro -%}
 
 {%- macro btn(id,label) -%}
-<button id="{{id}}" class="mdl-button mdl-js-button mdl-button--raised mdl-js-ripple-effect mdl-button--colored">{{label}}</button>
+<button id="{{id | replace("-", "_")}}" class="mdl-button mdl-js-button mdl-button--raised mdl-js-ripple-effect mdl-button--colored">{{label}}</button>
 {%- endmacro %}

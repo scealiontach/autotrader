@@ -294,7 +294,9 @@ def get_trading_dates(portfolio: Portfolio, max_days=1460):
         if row and row[0]:
             earliest_date = row[0]
         else:
-            earliest_date = datetime.today() - timedelta(days=max_days)
+            earliest_date = portfolio.first_deposit()
+            if earliest_date is None:
+                earliest_date = datetime.today() - timedelta(days=max_days)
 
         statement = text(
             """
@@ -449,9 +451,10 @@ def run_day(portfolio: Portfolio, trade_date, execute=True, report=True):
     complete_roi = (
         cumulative_return(total_invested, banked_cash + total_value + cash) * 100
     )
-    first_date = portfolio.first_transaction_like("%Reinvest/Bank%")
-    portfolio.record_performance(trade_date)
-    portfolio.report_status(trade_date, complete_roi, first_date, report=report)
+    first_date = portfolio.first_deposit()
+    if first_date is not None:
+        portfolio.record_performance(trade_date)
+        portfolio.report_status(trade_date, complete_roi, first_date, report=report)
     return first_date
 
 
@@ -483,16 +486,31 @@ def execute_plan(
         )
 
 
-INITIAL_WALLET_RANGE = [1200]
+INITIAL_WALLET_RANGE = [900]
 REINVEST_PERIOD_RANGE = [3650]
 RESERVE_CASH_RANGE = [1]
 REINVEST_AMT_RANGE = [100]
 BANK_THRESHOLD = [1000]
 WITH_CRYPTO = ["only", "no"]
 MAX_EXPOSURE = [75]
+YEARS_BACK = [1, 2, 5, 10, 20]
 
+LOCAL_STRATEGIES = [
+    "bollinger",
+    "breakout",
+    "sma_buy_hold",
+    "rsi",
+    "vwap",
+    "mean_reversion",
+    "macd",
+    "buy_sma_sell_rsi",
+    "buy_sma_sell_vwap",
+    "sma_rsi",
+    "upmacd_downmr",
+    "advanced",
+]
 # LOCAL_STRATEGIES = ["vwap", "sma_rsi","buy_sma_sell_rsi"]
-LOCAL_STRATEGIES = STRATEGIES
+# LOCAL_STRATEGIES = STRATEGIES
 
 
 def parameter_search():
@@ -506,6 +524,7 @@ def parameter_search():
         WITH_CRYPTO,
         MAX_EXPOSURE,
         LOCAL_STRATEGIES,
+        YEARS_BACK,
     )
 
     initial_combinations = list(initial_combinations)
@@ -514,7 +533,13 @@ def parameter_search():
         with Session() as session:
             session.expire_on_commit = False
             portfolio = portfolio_for_name(name)
-            initialize_portfolio(portfolio)
+            initialize_portfolio(portfolio, full=True)
+            initialwallet_date = datetime.today() - timedelta(weeks=52 * combination[7])
+            portfolio.invest(
+                Decimal(INITIAL_WALLET_RANGE[0]),
+                initialwallet_date,
+                INITIAL_DEPOSIT_DESCRIPTION,
+            )
             portfolio.reserve_cash_percent = combination[0]
             portfolio.reinvest_period = combination[1]
             portfolio.reinvest_amt = combination[2]
@@ -584,4 +609,9 @@ def main():
 
 
 if __name__ == "__main__":
+    log.basicConfig(
+        level=log.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[log.StreamHandler()],
+    )
     main()

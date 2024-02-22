@@ -34,6 +34,14 @@
 
 {%- macro tf_path() %}https://unpkg.com/tablefilter@0.7.3/dist/tablefilter/{% endmacro %}
 
+{%- macro play_button() -%}{{icon_button('play_arrow')}}{%- endmacro -%}
+{%- macro restore_button() -%}{{icon_button('restore')}}{%- endmacro -%}
+{%- macro paid_button() -%}{{icon_button('paid')}}</button>{%- endmacro -%}
+{%- macro icon_button(type) -%}<button class="mdl-button mdl-js-button mdl-button--icon">{{icon(type)}}</button>{%- endmacro -%}
+{%- macro icon_button_id(id,type) -%}<button id="{{id}}" class="mdl-button mdl-js-button mdl-button--icon">{{icon(type)}}</button>{%- endmacro -%}
+{%- macro icon(name) -%}<i class="material-icons">{{name}}</i>{%- endmacro -%}
+{%- macro text_button(name) -%}<button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">{{name}}</button>{%- endmacro -%}
+
 {%- block doc -%}
 <!DOCTYPE html>
 <html{% block html_attribs %}{%- endblock html_attribs %}>
@@ -66,6 +74,9 @@
           <nav class="mdl-navigation" aria-label="navbar">
             {%- block navbar -%}
             {%- endblock navbar %}
+            {{ navlink(url_for('portfolios')+"?simulated=-1", 'Manual Portfolios') }}
+            {{ navlink(url_for('portfolios')+"?sumulated=1", 'Simulated Portfolios') }}
+            {{ navlink(url_for('portfolios')+'/chart', 'Chart') }}
             {{ navlink(url_for('home'), 'Home') }}
           </nav>
         </div>

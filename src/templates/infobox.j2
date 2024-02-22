@@ -12,7 +12,7 @@
 </tr>
 {%- endif -%}
 {%- endfor -%}
-{% endmacro %}
+{%- endmacro -%}
 
 {%- macro items_to_numrows(data,fmt_string, include_keys,exclude_keys) -%}
 {%- for key, value in data.items()  -%}
@@ -26,9 +26,9 @@
 </tr>
 {%- endif -%}
 {%- endfor -%}
-{% endmacro %}
+{%- endmacro -%}
 
-{% macro items_to_pcrows(data,fmt_string, include_keys,exclude_keys) -%}
+{%- macro items_to_pcrows(data,fmt_string, include_keys,exclude_keys) -%}
 {%- for key, value in data.items()  -%}
 {%- if include_keys and key in include_keys -%}
 <tr>
@@ -40,20 +40,90 @@
 </tr>
 {%- endif -%}
 {%- endfor -%}
-{% endmacro %}
+{%- endmacro -%}
 
-{% macro keycell(val) -%}
-<td class="mdl-data-table__cell--non-numeric"><b>{{ val }}</b></td>
+{%- macro keycell(val,class) -%}
+<td class="mdl-data-table__cell--non-numeric {{class}}">
+  <b>{{ val }}</b>
+</td>
 {%- endmacro %}
 
-{%- macro cell(val, extra_classes) -%}
-<td class="mdl-data-table__cell--non-numeric {{extra_classes}}">{{ val }}</td>
+{%- macro cell(val, class) -%}
+<td class="mdl-data-table__cell--non-numeric {{class}}">
+  {{ val }}
+</td>
 {%- endmacro %}
 
-{% macro numcell(val,fmt) -%}
-<td>{{ fmt | format(val) }}</td>
+{%- macro numcell(val,fmt, class) -%}
+{%- if class -%}<td class="{{class}}">{%- else -%}<td>{%- endif -%}
+  {{ fmt | format(val) }}
+</td>
+{%- endmacro -%}
+
+{%- macro numcell(val,fmt, class) -%}
+{%- if class -%}<td class="{{class}}">{%- else -%}<td>{%- endif -%}
+  {{ fmt | format(val) }}
+</td>
+{%- endmacro -%}
+
+{%- macro percell(val,fmt,class) -%}
+{%- if class -%}<td class="{{class}}">{%- else -%}<td>{%- endif -%}
+  {{ fmt | format(val) }}%
+</td>
 {%- endmacro %}
 
-{% macro percell(val,fmt) -%}
-<td>{{ fmt | format(val) }}%</td>
-{%- endmacro %}
+{%- macro signal_cell(val, fmt, class, low=-1, high=1) -%}
+{%- if val >= high -%}
+{{numcell(val,fmt,"{{class}} mdl-color--green-500")}}
+{%- elif val <= low -%}
+{{numcell(val,fmt,"{{class}} mdl-color--red-500")}}
+{%- else -%}
+{{numcell(val,fmt, class)}}
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro high_gradient_cell(val, fmt, class, thresholds=[500,400,300,200,100,50]) -%}
+{%- if val >= thresholds[0] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--green-500")}}
+{%- elif val >= thresholds[1] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--green-400")}}
+{%- elif val >= thresholds[2] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--green-300")}}
+{%- elif val >= thresholds[3] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--green-200")}}
+{%- elif val >= thresholds[4] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--green-100")}}
+{%- elif val >= thresholds[5] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--green-50")}}
+{%- else -%}
+{{numcell(val,fmt, class)}}
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro low_gradient_cell(val, fmt, class, thresholds=[-500,-400,-300,-200,-100,-50]) -%}
+{%- if val <= thresholds[0] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--red-500")}}
+{%- elif val <= thresholds[1] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--red-400")}}
+{%- elif val <= thresholds[2] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--red-300")}}
+{%- elif val <= thresholds[3] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--red-200")}}
+{%- elif val <= thresholds[4] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--red-100")}}
+{%- elif val <= thresholds[5] -%}
+{{numcell(val,fmt,"{{class}} mdl-color--red-50")}}
+{%- else -%}
+{{numcell(val,fmt, class)}}
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro gradient_cell(val,fmt,class,center=0, high_thresholds=[500,400,300,200,100,50], low_thresholds=[-500,-400,-300,-200,-100,-50]) -%}
+{%- if val > center -%}
+{{ high_gradient_cell(val,fmt,class,thresholds=high_thresholds)}}
+{%- elif val < center -%}
+{{ low_gradient_cell(val,fmt,class,thresholds=low_thresholds)}}
+{%- else -%}
+{{numcell(val,fmt, class)}}
+{%- endif -%}
+{%- endmacro -%}

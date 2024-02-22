@@ -1,3 +1,4 @@
+from datetime import date
 import logging as log
 from decimal import Decimal
 
@@ -62,7 +63,7 @@ class Market:
             log.error(f"(E08) An error occurred: {e}")
             return False
 
-    def rate_performance(self, first_day, roi: Decimal) -> int:
+    def rate_performance(self, first_day: date, roi: Decimal) -> int:
         score = 0
         for idx in self.indexes:
             product = Product.from_symbol(idx)

@@ -27,7 +27,7 @@ class MarketDataCache:
         with Session() as session:
             if product_id not in self.cache:
                 query = """
-                    SELECT Date, ClosingPrice
+                    SELECT Date, ClosingPrice, Volume
                     FROM MarketData
                     WHERE ProductID = :product_id AND Date >= :after_date
                     ORDER BY Date ASC;

@@ -1,17 +1,19 @@
 import json
-import secrets
-from datetime import date
-from decimal import Decimal
 import logging as log
+import secrets
+from datetime import date, timedelta
+from decimal import Decimal
 
+from wtforms import form
+
+import download_products
 import pandas as pd
 import plotly
 import plotly.express as px
+import psutil
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.background import BackgroundScheduler
-from sqlalchemy.sql.functions import now
-import psutil
 from dateutil.utils import today
 from flask import Flask, g, jsonify, redirect, render_template, request, url_for
 from flask_bootstrap import Bootstrap5
@@ -22,13 +24,28 @@ from pytz import utc
 import update_eod_data
 from constants import ALL_INDEXES, DATABASE_URL
 from database import Session
-from driver import INITIAL_DEPOSIT_DESCRIPTION, exercise_strategy, initialize_portfolio
-from forms import AddPortfolioForm, EditPortfolioForm
+from driver import exercise_strategy, initialize_portfolio, make_recommendations
+from forms import (
+    AddPortfolioForm,
+    BuyOrderForm,
+    CashTransactionForm,
+    DeletePortfolioForm,
+    EditHolding,
+    EditPortfolioForm,
+    InvestPortfolioForm,
+    OrderForm,
+    ResetPortfolioForm,
+    SellOrderForm,
+    SimulatePortfolioForm,
+    StepPortfolioForm,
+    UpdateMarketDataForm,
+)
 from market_data_cache import CACHE
 from models import CashTransaction, TradingRecommendation, Transaction
 from portfolio import Lot, Portfolio, Position
 from product import Product
 from recommender import STRATEGIES
+
 
 max_processes = psutil.cpu_count(logical=False) or 1
 max_processes = max_processes - 1
@@ -58,15 +75,6 @@ def is_api_request(request):
     return "fmt" in request.args and request.args["fmt"] == "json"
 
 
-@scheduler.scheduled_job(
-    "cron", executor="external", max_instances=1, coalesce=True, minute="*/10"
-)
-def update_market_data():
-    log.info("Market data update begins")
-    update_eod_data.update()
-    log.info("Market data update complete")
-
-
 @app.before_request
 def before_request():
     g.db_session = Session()
@@ -77,9 +85,25 @@ def shutdown_session(exception=None):
     Session.remove()
 
 
-@app.route("/")
+@app.route("/", methods=["GET"])
 def home():
-    return render_template("home.html")
+    form = UpdateMarketDataForm()
+    return render_template("home.html", update_market_form=form)
+
+
+def update_market_data_job():
+    log.info("Downloading product information begins")
+    download_products.download_products()
+    log.info("Downloading product information complete")
+    log.info("Market data update begins")
+    update_eod_data.update()
+    log.info("Market data update complete")
+
+
+@app.route("/update", methods=["POST"])
+def update_market_data():
+    scheduler.add_job(update_market_data_job, id="update_market_data")
+    return redirect(url_for("home"))
 
 
 COL_CUMULATIVE_RETURN = ".cum_ret"
@@ -92,11 +116,20 @@ def portfolios_chart():
     portfolios: list[Portfolio] = (
         g.db_session.query(Portfolio).order_by(Portfolio.id.asc()).all()
     )
+    sim_filter = request.args.get("simulated", 0, type=int)
+    if sim_filter > 0:
+        portfolios = [p for p in portfolios if p.is_active]
+    elif sim_filter < 0:
+        portfolios = [p for p in portfolios if not p.is_active]
+
     df = None
 
     graph_col = COL_CUMULATIVE_RETURN
     last_active = None
     y_cols = []
+
+    first_deposit = None
+
     for p in portfolios:
         pf_df = p.get_performance()
         if len(pf_df) <= 0:
@@ -116,9 +149,11 @@ def portfolios_chart():
         if df is None:
             df = pf_df
         else:
-            df = pd.merge(df, pf_df, on="date", how="left")
+            df = pd.merge(df, pf_df, on="date", how="outer")
         if last_active is None or p.last_active() > last_active:
             last_active = p.last_active()
+        if first_deposit is None or p.first_deposit() < first_deposit:
+            first_deposit = p.first_deposit()
 
     if last_active is None or p.last_active() > last_active:
         last_active = today()
@@ -126,9 +161,13 @@ def portfolios_chart():
         product = Product.from_symbol(index)
         CACHE.load_data(product.id)
         y_cols.append(product.symbol + graph_col)
-        index_df = CACHE.get_data(product.id, date(1901, 1, 1), last_active)
+        index_df = CACHE.get_data(product.id, first_deposit, last_active)
         index_df.rename(
-            columns={"closingprice": product.symbol + COL_CLOSE}, inplace=True
+            columns={
+                "closingprice": product.symbol + COL_CLOSE,
+                "volume": product.symbol + ".volume",
+            },
+            inplace=True,
         )
         index_df[product.symbol + COL_PCT_CHANGE_DAILY] = index_df[
             product.symbol + COL_CLOSE
@@ -139,7 +178,7 @@ def portfolios_chart():
         if df is None:
             df = index_df
         else:
-            df = pd.merge(df, index_df, on="date", how="left")
+            df = pd.merge(df, index_df, on="date", how="outer")
 
     fig = px.line(df, x="date", y=y_cols, title="vs INDEX")
     graph_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
@@ -147,8 +186,8 @@ def portfolios_chart():
     return render_template("portfolios_chart.html", graphJSON=graph_json)
 
 
-@app.route("/portfolios", methods=["GET", "POST"])
-def portfolios():
+@app.route("/portfolios/add", methods=["POST"])
+def portfolio_add():
     form = AddPortfolioForm()
     if form.validate_on_submit():
         if form.crypto_allowed.data:
@@ -178,59 +217,102 @@ def portfolios():
         g.db_session.add(portfolio)
         g.db_session.commit()
         return redirect(url_for("portfolio_detail", portfolio_id=portfolio.id))
+    else:
+        return jsonify({"message": "Invalid request"}), 400
+
+
+@app.route("/portfolios", methods=["GET"])
+def portfolios():
+    add_form = AddPortfolioForm()
+    sim_form = SimulatePortfolioForm()
+    reset_form = ResetPortfolioForm()
+    invest_form = InvestPortfolioForm()
 
     portfolios: list[Portfolio] = (
         g.db_session.query(Portfolio).order_by(Portfolio.id.asc()).all()
     )
+
+    sim_filter = request.args.get("simulated", 0, type=int)
+    if sim_filter > 0:
+        portfolios = [p for p in portfolios if p.is_active]
+    elif sim_filter < 0:
+        portfolios = [p for p in portfolios if not p.is_active]
+
     data = []
     for p in portfolios:
         data.append(p.as_dict_fast())
     if is_api_request(request):
         return jsonify(data)
     else:
-        return render_template("portfolios.html", data=data, form=form)
+        return render_template(
+            "portfolios.html",
+            data=data,
+            add_form=add_form,
+            sim_form=sim_form,
+            reset_form=reset_form,
+            invest_form=invest_form,
+        )
 
 
-@app.route("/portfolios/<int:portfolio_id>", methods=["GET", "POST"])
-def portfolio_detail(portfolio_id):
+@app.route("/portfolios/<int:portfolio_id>/edit", methods=["POST"])
+def portfolio_detail_edit(portfolio_id):
     portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
-    form = EditPortfolioForm()
-    if request.method == "GET":
-        form.bank_pc.data = portfolio.bank_pc
-        form.bank_threshold.data = portfolio.bank_threshold
-        form.crypto_allowed.data = "Cryptocurrency" in portfolio.sectors_allowed  # type: ignore
-        form.max_exposure.data = portfolio.max_exposure
-        form.reserve_cash_percent.data = portfolio.reserve_cash_percent
-        form.reinvest_amt.data = portfolio.reinvest_amt
-        form.reinvest_period.data = portfolio.reinvest_period
-        form.strategy.process_data(STRATEGIES.index(portfolio.strategy))
-        form.name.data = portfolio.name
-        form.description.data = portfolio.description
-        form.is_active.data = portfolio.is_active
-
-    if form.validate_on_submit():
-        if form.crypto_allowed.data:
+    edit_form = EditPortfolioForm()
+    if edit_form.validate_on_submit():
+        if edit_form.crypto_allowed.data:
             sectors_allowed = ["Cryptocurrency"]
             sectors_forbidden = []
         else:
             sectors_allowed = []
             sectors_forbidden = ["Cryptocurrency"]
         portfolio.is_active = True
-        portfolio.reserve_cash_percent = form.reserve_cash_percent.data  # type: ignore
-        portfolio.reinvest_period = form.reinvest_period.data  # type: ignore
-        portfolio.reinvest_amt = form.reinvest_amt.data  # type: ignore
-        portfolio.bank_threshold = form.bank_threshold.data  # type: ignore
-        portfolio.bank_pc = form.bank_pc.data  # type: ignore
-        portfolio.max_exposure = form.max_exposure.data  # type: ignore
-        portfolio.strategy = STRATEGIES[int(form.strategy.data)]  # type: ignore
+        portfolio.name = edit_form.name.data  # type: ignore
+        portfolio.description = edit_form.description.data  # type: ignore
+        portfolio.reserve_cash_percent = edit_form.reserve_cash_percent.data  # type: ignore
+        portfolio.reinvest_period = edit_form.reinvest_period.data  # type: ignore
+        portfolio.reinvest_amt = edit_form.reinvest_amt.data  # type: ignore
+        portfolio.bank_threshold = edit_form.bank_threshold.data  # type: ignore
+        portfolio.bank_pc = edit_form.bank_pc.data  # type: ignore
+        portfolio.max_exposure = edit_form.max_exposure.data  # type: ignore
+        portfolio.strategy = STRATEGIES[int(edit_form.strategy.data)]  # type: ignore
         portfolio.sectors_allowed = sectors_allowed  # type: ignore
         portfolio.sectors_forbidden = sectors_forbidden  # type: ignore
         portfolio.dividend_only = False
-        portfolio.is_active = form.is_active.data
+        portfolio.is_active = edit_form.is_active.data
         log.info(f"Updating portfolio {portfolio.id}/{portfolio.name}")
         g.db_session.add(portfolio)
         g.db_session.commit()
         return redirect(url_for("portfolio_detail", portfolio_id=portfolio.id))
+    else:
+        edit_form.errors
+        return jsonify({"message": "Invalid request", "errors": edit_form.errors}), 400
+
+
+@app.route("/portfolios/<int:portfolio_id>", methods=["GET"])
+def portfolio_detail(portfolio_id):
+    portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
+    edit_form = EditPortfolioForm()
+    delete_form = DeletePortfolioForm()
+    simulate_form = SimulatePortfolioForm()
+    reset_form = ResetPortfolioForm()
+    invest_form = InvestPortfolioForm()
+    order_form = OrderForm()
+    edit_holding_form = EditHolding()
+    step_form = StepPortfolioForm()
+    edit_form.bank_pc.data = portfolio.bank_pc
+    edit_form.bank_threshold.data = portfolio.bank_threshold
+    edit_form.crypto_allowed.data = "Cryptocurrency" in portfolio.sectors_allowed  # type: ignore
+    edit_form.max_exposure.data = portfolio.max_exposure
+    edit_form.reserve_cash_percent.data = portfolio.reserve_cash_percent
+    edit_form.reinvest_amt.data = portfolio.reinvest_amt
+    edit_form.reinvest_period.data = portfolio.reinvest_period
+    edit_form.strategy.process_data(STRATEGIES.index(portfolio.strategy))
+    edit_form.name.data = portfolio.name
+    edit_form.description.data = portfolio.description
+    edit_form.is_active.data = portfolio.is_active
+
+    invest_form.amount.data = portfolio.reinvest_amt
+    invest_form.date.data = portfolio.last_active()
 
     if is_api_request(request):
         if portfolio:
@@ -267,12 +349,16 @@ def portfolio_detail(portfolio_id):
                 product = Product.from_symbol(index)
                 CACHE.load_data(product.id)
                 index_df = CACHE.get_data(
-                    product.id, date(1901, 1, 1), portfolio.last_active()
+                    product.id, portfolio.first_deposit(), portfolio.last_active()
                 )
                 if len(index_df) <= 0:
                     continue
                 index_df.rename(
-                    columns={"closingprice": product.symbol + COL_CLOSE}, inplace=True
+                    columns={
+                        "closingprice": product.symbol + COL_CLOSE,
+                        "volume": product.symbol + ".volume",
+                    },
+                    inplace=True,
                 )
                 index_df[product.symbol + COL_PCT_CHANGE_DAILY] = index_df[
                     product.symbol + COL_CLOSE
@@ -283,12 +369,12 @@ def portfolio_detail(portfolio_id):
                 if df is None:
                     df = index_df
                 else:
-                    df = pd.merge(df, index_df, on="date", how="left")
+
+                    df = pd.merge(df, index_df, on="date", how="outer")
                 y_cols.append(product.symbol + graph_col)
 
             if df is not None:
                 fig = px.line(df, x="date", y=y_cols, title="vs INDEX")
-
                 graph_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
             else:
                 graph_json = None
@@ -297,39 +383,75 @@ def portfolio_detail(portfolio_id):
                 portfolio=portfolio.as_dict(),
                 positions=positions,
                 graphJSON=graph_json,
-                form=form,
+                edit_form=edit_form,
+                delete_form=delete_form,
+                simulate_form=simulate_form,
+                reset_form=reset_form,
+                invest_form=invest_form,
+                order_form=order_form,
+                edit_holding_form=edit_holding_form,
+                step_form=step_form,
             )
 
         return jsonify({"message": "Portfolio not found"}), 404
 
 
-@app.route("/portfolios/<int:portfolio_id>", methods=["DELETE"])
-def delete_portfolio(portfolio_id):
+@app.route("/portfolios/<int:portfolio_id>/delete", methods=["POST"])
+def portfolio_delete(portfolio_id):
     portfolio = g.db_session.query(Portfolio).get(portfolio_id)
     if portfolio:
-        g.db_session.delete(portfolio)
-        g.db_session.commit()
-        return jsonify({"message": "Portfolio deleted successfully"})
+        form = DeletePortfolioForm()
+        if form.validate_on_submit():
+            if form.confirm.data:
+                initialize_portfolio(portfolio, full=True)
+                g.db_session.delete(portfolio)
+                g.db_session.commit()
+            return redirect(url_for("portfolios"))
+        else:
+            return jsonify({"message": "Invalid request"}), 400
+    return jsonify({"message": "Portfolio not found"}), 404
+
+
+@app.route("/portfolios/<int:portfolio_id>/step", methods=["POST"])
+def portfolio_step(portfolio_id):
+    form = StepPortfolioForm()
+    if not form.validate_on_submit():
+        return jsonify({"message": "Invalid request"}), 400
+
+    portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
+    if portfolio:
+        if not portfolio.is_active:
+            la = portfolio.last_active()
+            while la < date.today():
+                make_recommendations(portfolio, la)
+                portfolio.record_performance(la)
+                la = la + timedelta(days=1)
+        return redirect(request.referrer)
     return jsonify({"message": "Portfolio not found"}), 404
 
 
 @app.route("/portfolios/<int:portfolio_id>/simulate", methods=["POST"])
 def portfolio_simulate(portfolio_id):
     portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
-    if not portfolio.is_active:
-        return redirect(request.referrer)
-    job_id = f"simulate_{portfolio_id}"
-    job = scheduler.get_job(job_id)
-    if job:
-        log.warning(f"Job {job_id} already exists")
-    else:
-        scheduler.add_job(
-            exercise_strategy,
-            args=[portfolio],
-            kwargs={"report": False},
-            id=f"simulate_{portfolio_id}",
-        )
-        return redirect(request.referrer)
+    if portfolio:
+        if not portfolio.is_active:
+            return redirect(request.referrer)
+        form = SimulatePortfolioForm()
+        if form.validate_on_submit():
+            job_id = f"simulate_{portfolio_id}"
+            job = scheduler.get_job(job_id)
+            if job:
+                log.warning(f"Job {job_id} already exists")
+            else:
+                scheduler.add_job(
+                    exercise_strategy,
+                    args=[portfolio],
+                    kwargs={"report": False},
+                    id=f"simulate_{portfolio_id}",
+                )
+            return redirect(request.referrer)
+        else:
+            return jsonify({"message": "Invalid request"}), 400
     return jsonify({"message": "Portfolio not found"}), 404
 
 
@@ -337,16 +459,101 @@ def portfolio_simulate(portfolio_id):
 def portfolio_reset(portfolio_id):
     portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
     if portfolio:
-        initialize_portfolio(portfolio, full=True)
+        form = ResetPortfolioForm()
+        if form.validate_on_submit():
+            initialize_portfolio(portfolio, full=True)
+            return redirect(request.referrer)
+        else:
+            return jsonify({"message": "Invalid request"}), 400
+    return jsonify({"message": "Portfolio not found"}), 404
+
+
+@app.route("/portfolios/<int:portfolio_id>/invest", methods=["POST"])
+def portfolio_invest(portfolio_id):
+    portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
+    if portfolio:
+        form = InvestPortfolioForm()
+        if form.validate_on_submit():
+            amount = form.amount.data
+            date = form.date.data
+            description = form.description.data
+            if amount is None or date is None or description is None:
+                return jsonify({"message": "Invalid request"}), 400
+            portfolio.invest(amount, date, description)
+            return redirect(request.referrer)
         return redirect(request.referrer)
     return jsonify({"message": "Portfolio not found"}), 404
 
 
-@app.route("/portfolios/<int:portfolio_id>/invest", methods=["GET"])
-def portfolio_invest(portfolio_id):
+@app.route("/portfolios/<int:portfolio_id>/order", methods=["POST"])
+def portfolio_order(portfolio_id):
     portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
     if portfolio:
-        portfolio.invest(Decimal(1000), "1975-04-24", INITIAL_DEPOSIT_DESCRIPTION)
+        form = OrderForm()
+        if form.validate_on_submit():
+            symbol = form.symbol.data
+            quantity = form.quantity.data
+            date = form.date.data
+            action = form.buysell.data
+            price = form.price.data
+            buysell = form.buysell.data
+            if (
+                action is None
+                or symbol is None
+                or quantity is None
+                or date is None
+                or price is None
+                or buysell is None
+            ):
+                return jsonify({"message": "Invalid request"}), 400
+            product = Product.from_symbol(symbol)
+            if product is None:
+                return jsonify({"message": "Invalid request"}), 400
+            if action == "BUY":
+                portfolio.buy(product.id, quantity, price, date)
+            elif action == "SELL":
+                portfolio.sell(product.id, quantity, price, date)
+            return redirect(request.referrer)
+        return redirect(request.referrer)
+    return jsonify({"message": "Portfolio not found"}), 404
+
+
+@app.route("/portfolios/<int:portfolio_id>/edit_holding", methods=["POST"])
+def edit_holding(portfolio_id):
+    portfolio: Portfolio = g.db_session.query(Portfolio).get(portfolio_id)
+    if portfolio:
+        form = EditHolding()
+        if form.validate_on_submit():
+            symbol = form.symbol.data
+            quantity = form.quantity.data
+            date = form.date.data
+            buysell = form.buysell.data
+            if symbol is None or quantity is None or date is None or buysell is None:
+                return jsonify({"message": "Invalid request"}), 400
+
+            product = Product.from_symbol(symbol)
+            price = product.fetch_last_closing_price(date)
+            if price is None:
+                return jsonify({"message": "Invalid request"}), 400
+
+            total = quantity * price
+            if buysell == "SELL":
+                portfolio.add_debit(
+                    total,
+                    date,
+                    f"Journal Entry for Sell {quantity} of {symbol}",
+                    transaction_type="INVEST",
+                )
+                portfolio.sell(product.id, quantity, price, date)
+            elif buysell == "BUY":
+                portfolio.add_deposit(
+                    total,
+                    date,
+                    f"Journal Entry for Buy {quantity} of {symbol}",
+                    transaction_type="INVEST",
+                )
+                portfolio.buy(product.id, quantity, price, date)
+            return redirect(request.referrer)
         return redirect(request.referrer)
     return jsonify({"message": "Portfolio not found"}), 404
 
@@ -365,6 +572,7 @@ def get_portfolio_recommendations(portfolio_id):
 
 @app.route("/portfolios/<int:portfolio_id>/transactions", methods=["GET"])
 def get_portfolio_transactions(portfolio_id):
+    order_form = OrderForm()
     transactions = (
         g.db_session.query(Transaction)
         .filter_by(portfolio_id=portfolio_id)
@@ -376,11 +584,14 @@ def get_portfolio_transactions(portfolio_id):
         tx["symbol"] = Product.from_id(tx["product_id"]).symbol
     if is_api_request(request):
         return jsonify(transactions_data)
-    return render_template("tx_register.html", transactions=transactions_data)
+    return render_template(
+        "tx_register.html", transactions=transactions_data, order_form=order_form
+    )
 
 
 @app.route("/portfolios/<int:portfolio_id>/cash", methods=["GET"])
 def get_portfolio_cashtransactions(portfolio_id):
+    form = CashTransactionForm()
     transactions = (
         g.db_session.query(CashTransaction)
         .filter_by(portfolio_id=portfolio_id)
@@ -390,7 +601,9 @@ def get_portfolio_cashtransactions(portfolio_id):
     transactions_data = [t.as_dict() for t in transactions]
     if is_api_request(request):
         return jsonify(transactions_data)
-    return render_template("cash_register.html", transactions=transactions_data)
+    return render_template(
+        "cash_register.html", transactions=transactions_data, form=form
+    )
 
 
 @app.route("/portfolios/<int:portfolio_id>/positions", methods=["GET"])
@@ -492,4 +705,9 @@ def product_by_symbol(symbol):
 
 
 if __name__ == "__main__":
+    log.basicConfig(
+        level=log.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[log.StreamHandler()],
+    )
     app.run(debug=True, port=6000)

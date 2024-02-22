@@ -23,6 +23,14 @@ VENMO_SUPPORTED_CURRENCY_IDS = [
     "bitcoin-cash",
 ]
 
+VENMO_SUPPORTED_CURRENCY_SYMBOLS = [
+    "pyusd-usd",
+    "eth-usd",
+    "ltc-usd",
+    "bch-usd",
+    "btc-usd",
+]
+
 
 def fetch_sp500_symbols_wikipedia(
     url=WIKIPEDIA_SP500_URL,
@@ -223,7 +231,8 @@ def download_products():
     symbols += fetch_nasdaq100_symbols_wikipedia()
     symbols += fetch_sp500_symbols_wikipedia()
     symbols += fetch_dji_symbols_wikipedia()
-    symbols += ["pyusd-usd", "eth-usd", "ltc-usd", "bch-usd", "btc-usd"]
+    symbols += VENMO_SUPPORTED_CURRENCY_SYMBOLS
+    symbols += INDEX_SYMBOLS
     symbols = list(set(symbols))
     symbols.sort()
     for symbol in symbols:
@@ -237,18 +246,11 @@ def download_products():
         if product_info:
             insert_product_into_db(product_info)
 
-    for index in INDEX_SYMBOLS:
-        product = get_product(symbol)
-        if (
-            product
-            and product[6].date() >= (datetime.today() - timedelta(days=5)).date()
-        ):
-            continue
-        product_info = fetch_stock_info(index)
-        if product_info:
-            insert_product_into_db(product_info, False)
-    # if the end_date is before 7pm we need to fetch the data for the previous day
-
 
 if __name__ == "__main__":
+    log.basicConfig(
+        level=log.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[log.StreamHandler()],
+    )
     download_products()

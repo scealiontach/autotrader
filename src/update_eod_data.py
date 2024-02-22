@@ -1,6 +1,6 @@
 import logging as log
 import warnings
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import yfinance as yf
 from sqlalchemy import text
@@ -26,21 +26,10 @@ def fetch_products_from_db():
 
 
 def update_eod_data(product_id, symbol):
-    end_date = (datetime.now() + timedelta(days=1)).date()
-
-    last_recorded_date = get_last_recorded_date(product_id)
-    if last_recorded_date:
-        # if the last_recorded_date is the same as the end_date then we don't need to fetch any data
-        if last_recorded_date.strftime("%Y-%m-%d") == end_date.strftime("%Y-%m-%d"):
-            return (last_recorded_date, last_recorded_date)
-        start_date = last_recorded_date
-    else:
-        start_date = end_date - timedelta(
-            days=5 * 365
-        )  # Default to last 365 days if no record exists
+    log.info(f"Fetching data for {symbol}")
 
     stock = yf.Ticker(symbol)
-    hist = stock.history(start=start_date, end=end_date)
+    hist = stock.history(period="max", interval="1d")
 
     first_date = None
     last_date = None
@@ -154,15 +143,7 @@ def update():
     earliest = None
     latest = None
     for product_id, symbol in products:
-        first, last = update_eod_data(product_id, symbol)
-        if earliest is None:
-            earliest = first
-            latest = last
-        else:
-            if first and first < earliest:
-                earliest = first
-            if last and last > latest:
-                latest = last
+        update_eod_data(product_id, symbol)
     log.info(
         f"Equity market data fetched Earliest date: {earliest} Latest date: {latest}"
     )
@@ -171,4 +152,9 @@ def update():
 
 
 if __name__ == "__main__":
+    log.basicConfig(
+        level=log.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[log.StreamHandler()],
+    )
     update()

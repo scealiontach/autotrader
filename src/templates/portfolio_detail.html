@@ -7,7 +7,6 @@
 {%block title%}Portfolio Detail{%endblock%}
 
 {% block navbar %}
-{{ navlink(url_for('portfolios'), 'Portfolios') }}
 {{link_to_tx(portfolio.id, 'Orders')}}
 {{link_to_cashtx(portfolio.id, 'Cash')}}
 {%- endblock navbar %}
@@ -29,19 +28,50 @@
     <table>
       <tr>
       {%- if portfolio.is_active -%}
-        <td><form action="/portfolios/{{portfolio.id}}/simulate" method="get">
-          <button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Simulate</button>
-        </form></td>
+        <td>
+          <form action="{{url_for('portfolio_simulate',portfolio_id=portfolio.id)}}" method="post">
+            {{ simulate_form.csrf_token }}
+            {{ text_button('Simulate') }}
+          </form>
+        </td>
       {%- endif -%}
-        <td><form action="/portfolios/{{portfolio.id}}/reset" method="get">
-          <button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Reset</button>
-        </form></td>
-        <td><form action="/portfolios/{{portfolio.id}}/invest" method="get">
-          <button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Invest</button>
-        </form></td>
+      {%- if not portfolio.is_active -%}
+        <td>
+          <form action="{{url_for('portfolio_step',portfolio_id=portfolio.id)}}" method="post">
+            {{ step_form.csrf_token }}
+            {{ text_button('Step') }}
+          </form>
+        </td>
+      {%- endif -%}
+        <td>
+          <form action="{{url_for('portfolio_reset',portfolio_id=portfolio.id)}}" method="post">
+            {{ reset_form.csrf_token }}
+            {{ text_button('Reset') }}
+          </form>
+        </td>
         <td>
           {{container()}}
-          {{ pfdialog.btn('edit-portfolio','Edit') }}
+            {{ pfdialog.btn('invest_portfolio','Invest') }}
+          {{ enddiv() }}
+        </td>
+        <td>
+          {{container()}}
+            {{ pfdialog.btn('edit_portfolio','Edit') }}
+          {{ enddiv() }}
+        </td>
+        <td>
+          {{container()}}
+            {{ pfdialog.btn('delete_portfolio','Delete') }}
+          {{ enddiv() }}
+        </td>
+        <td>
+          {{container()}}
+            {{ pfdialog.btn('edit_holding','Edit Holdings') }}
+          {{ enddiv() }}
+        </td>
+        <td>
+          {{container()}}
+            {{ pfdialog.btn('portfolio_order','New Order') }}
           {{ enddiv() }}
         </td>
       </tr>
@@ -60,8 +90,19 @@
   <div id="strategy" class="mdl-cell mdl-cell--2-col">
     <h5>Strategy</h5>
     <table>
-      {{ infobox.items_to_rows(portfolio, ['strategy', 'is_active', 'last_active', 'dividend_only',  'sectors_allowed', 'sectors_forbidden']) }}
+      {{ infobox.items_to_rows(portfolio, ['strategy', 'is_active', 'last_active', 'dividend_only', 'sectors_allowed', 'sectors_forbidden']) }}
       {{ infobox.items_to_pcrows(portfolio, "%3.0f", ['max_exposure', 'bank_pc', 'bank_threshold', 'reserve_cash_percent']) }}
+      {{ infobox.items_to_numrows(portfolio, "%3.4f", ['sharpe_ratio']) }}
+      {%- for field in portfolio.drawdown -%}
+      <tr>
+        {{infobox.keycell(field)}}
+        {%- if portfolio.drawdown[field] is not none -%}
+        {{infobox.cell("%3.4f" | format(portfolio.drawdown[field]))}}
+        {%- else -%}
+        {{infobox.cell('None')}}
+        {%- endif -%}
+      </tr>
+      {%- endfor -%}
     </table>
   </div>
   <div id="recommendations" class="mdl-cell mdl-cell--4-col">
@@ -80,7 +121,9 @@
         {%- for recommendation in portfolio.active_recommendations  -%}
           <tr>
             <td>{{ link_to_symbol(recommendation.symbol) }}</td>
-            <td>{{ recommendation.action }}</td>
+            <td>
+              {{ pfdialog.btn(recommendation.action+'_'+recommendation.symbol,recommendation.action) }}
+            </td>
             <td>{{ currency_fmt(recommendation.last) }}</td>
             <td>{{ recommendation.strategy }}</td>
             <td>{{ "%3.3f" | format(recommendation.strength) }}</td>
@@ -107,7 +150,13 @@
         {%- for position in positions  -%}
           <tr>
             <td>{{link_to_product(position.product_id, position.symbol)}}</td>
+            {%- if position.recommendation is not none and position.recommendation != "HOLD" and position.recommendation != "None" -%}
+            <td>
+              {{ pfdialog.btn('pos_'+position.recommendation+'_'+position.symbol,position.recommendation) }}
+            </td>
+            {%- else -%}
             <td>{{ position.recommendation }}</td>
+            {%- endif -%}
             <td>{{share_fmt(position.quantity)}}</td>
             <td>{{currency_fmt(position.last)}}</td>
             <td>{{currency_fmt(position.last * position.quantity)}}</td>
@@ -120,6 +169,44 @@
   </div>
 </div>
 {{ chart.chart('chart',graphJSON) }}
-{{ pfdialog.dialog('edit-portfolio', form) }}
+{{ pfdialog.dialog('invest_portfolio', invest_form, url_for('portfolio_invest', portfolio_id=portfolio.id), 'Add Investment') }}
+{{ pfdialog.dialog('edit_portfolio', edit_form, url_for('portfolio_detail_edit', portfolio_id=portfolio.id), 'Edit Portfolio') }}
+{{ pfdialog.dialog('delete_portfolio', delete_form, url_for('portfolio_delete', portfolio_id=portfolio.id), 'Delete Portfolio') }}
+{{ pfdialog.dialog('edit_holding', edit_holding_form, url_for('edit_holding', portfolio_id=portfolio.id), 'Edit Holding') }}
+{{ pfdialog.dialog('portfolio_order', order_form, url_for('portfolio_order', portfolio_id=portfolio.id), 'New Order') }}
+
+{%- for recommendation in portfolio.active_recommendations -%}
+  {{ pfdialog.begin_dialog(recommendation.action+'_'+recommendation.symbol, recommendation.action+' '+recommendation.symbol) }}
+  <form action="{{url_for('portfolio_order', portfolio_id=portfolio.id)}}" method="post">
+    {{ order_form.csrf_token }}
+    <input type="hidden" name="symbol" value="{{ recommendation.symbol }}">
+    <input type="hidden" name="buysell" value="{{ recommendation.action }}">
+    <input type="hidden" name="date" value="{{ portfolio.last_active }}">
+    {{order_form.quantity.label}}{{ order_form.quantity }}
+    @{{ order_form.price.label }}{{ order_form.price }}
+    {{ order_form.submit() }}
+  </form>
+  {{ pfdialog.end_dialog(recommendation.action+'_'+recommendation.symbol) }}
+{%- endfor -%}
+
+{%- for position in positions  -%}
+  {{ pfdialog.begin_dialog('pos_'+position.recommendation+'_'+position.symbol, position.recommendation+' '+position.symbol) }}
+  <form action="{{url_for('portfolio_order', portfolio_id=portfolio.id)}}" method="post">
+    {{ order_form.csrf_token }}
+    <input type="hidden" name="symbol" value="{{ position.symbol }}">
+    <input type="hidden" name="buysell" value="{{ position.recommendation }}">
+    <input type="hidden" name="date" value="{{ portfolio.last_active }}">
+    {%- if position.recommendation == "SELL" -%}
+    <input type="hidden" name="quantity" value="{{ position.quantity }}">
+    <span class="mdl-color-text--grey-700">Sell All ({{position.quantity}})</span>
+    {%- else -%}
+    {{order_form.quantity.label}}{{ order_form.quantity }}
+    {%- endif -%}
+    @{{ order_form.price.label }}{{ order_form.price }}
+    {{ order_form.submit() }}
+  </form>
+  {{ pfdialog.end_dialog('pos_'+position.recommendation+'_'+position.symbol) }}
+{%- endfor -%}
+
 {%- endblock content %}
 ```

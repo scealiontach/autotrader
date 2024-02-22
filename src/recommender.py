@@ -251,11 +251,14 @@ class Recommender:
             macd = exp1 - exp2
             signal = macd.ewm(span=short_span, adjust=False).mean()
 
+            macd_signal_difference = abs(macd.iloc[-1] - signal.iloc[-1])
+            strength = Decimal(macd_signal_difference)
+
             # Determine the trading recommendation
             if macd.iloc[-1] > signal.iloc[-1] and macd.iloc[-2] <= signal.iloc[-2]:
-                return self._make_recommendation(BUY, strategy, Decimal(1))
+                return self._make_recommendation(BUY, strategy, strength)
             elif macd.iloc[-1] < signal.iloc[-1] and macd.iloc[-2] >= signal.iloc[-2]:
-                return self._make_recommendation(SELL, strategy, Decimal(1))
+                return self._make_recommendation(SELL, strategy, strength)
             else:
                 return self._make_recommendation(HOLD, strategy, Decimal(0))
         except Exception as e:

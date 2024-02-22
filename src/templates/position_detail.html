@@ -29,6 +29,7 @@
           <th>Price</th>
           <th>Purchased</th>
           <th>Cost</th>
+          <th>Unrealized Gain/Loss</th>
           <th></th>
         </tr>
       </thead>
@@ -41,6 +42,7 @@
             <td>{{currency_fmt(lot.purchaseprice)}}</td>
             <td class="mdl-data-table__cell--non-numeric">{{lot.purchasedate}}</td>
             <td>{{currency_fmt(lot.purchaseprice * lot.quantity)}}</td>
+            <td>{{currency_fmt((position.last - lot.purchaseprice) * lot.quantity)}}</td>
           </tr>
         {%- endfor -%}
       </tbody>

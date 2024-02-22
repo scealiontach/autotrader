@@ -1,4 +1,5 @@
 import logging as log
+import math
 import sys
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -6,8 +7,8 @@ from types import NoneType
 from typing import Optional, Union
 
 import pandas as pd
+from plotly.validators.histogram import cumulative
 from cachetools import LFUCache, TTLCache
-from numpy import divide
 from sqlalchemy import (
     DECIMAL,
     JSON,
@@ -17,7 +18,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    insert,
     select,
     text,
 )
@@ -106,7 +106,7 @@ class Position(Base):
         self.quantity = 0  # type: ignore
 
     def as_dict(self):
-        portfolio = Portfolio.from_id(self.portfolio_id)
+        portfolio: Portfolio = Portfolio.from_id(self.portfolio_id)
         recommendation = self.recommendation(portfolio.last_active())
         if recommendation:
             recommendation = recommendation.action
@@ -321,6 +321,8 @@ class Portfolio(Base):
             "value": self.value(self.last_active()),
             "roi": self.roi(self.last_active()),
             "last_active": self.last_active(),
+            "sharpe_ratio": self.sharpe_ratio(),
+            "drawdown": self.drawdown_metrics(),
         }
 
     def as_dict(self):
@@ -379,9 +381,11 @@ class Portfolio(Base):
     def eligible_products(self):
         with Session() as session:
             query = """
-                SELECT p.ProductID, p.Symbol
-                FROM Products p
-                WHERE p.isactive = true
+                SELECT p.ProductID, p.Symbol, count(1)
+                FROM Products p, marketdata m
+                WHERE p.productid=m.productid
+                and m.date < :as_of_date
+                and p.isactive = true
             """
             sectors_allowed: list = self.sectors_allowed  # type: ignore
             sectors_forbidden: list = self.sectors_forbidden  # type: ignore
@@ -395,9 +399,11 @@ class Portfolio(Base):
                 sectors = ",".join(sectors_forbidden)
                 sectors = f"('{sectors}')"
                 query += f" AND p.sector not in {sectors}"
-
+            query += " GROUP BY p.ProductID, p.Symbol"
             statement = text(query)
-            result = session.execute(statement).all()
+            result = session.execute(
+                statement, {"as_of_date": self.last_active()}
+            ).all()
             return result
 
     def positions(self) -> list[Position]:
@@ -428,7 +434,7 @@ class Portfolio(Base):
             poslist = [row[0] for row in result]
         return poslist
 
-    def update_positions(self, as_of_d):
+    def update_positions(self, as_of_d: date):
         with Session() as session:
             session.expire_on_commit = False
             del_statement = text(
@@ -537,7 +543,7 @@ class Portfolio(Base):
         else:
             return Decimal(0)
 
-    def report_status(self, report_date, roi, first_day, report=True):
+    def report_status(self, report_date: date, roi, first_day: date, report=True):
         bank = self.bank_balance(report_date)
         total_cash = self.cash_balance(report_date)
         total_value = self.value(report_date)
@@ -769,9 +775,14 @@ class Portfolio(Base):
                 )
 
             session.commit()
+            self.update_positions(transaction_date)
 
-    def last_active(self):
+    def last_active(self) -> date:
         with Session() as session:
+            reco_date: Union[date, None] = None
+            trade_date: Union[date, None] = None
+            cash_date: Union[date, None] = None
+
             statement = text(
                 """
                 SELECT MAX(recommendationdate)
@@ -780,12 +791,57 @@ class Portfolio(Base):
             """
             )
             result = session.execute(statement, {"portfolio_id": self.id}).first()
+            reco_date = None
             if result and result[0]:
-                return result[0]
-        return datetime(1975, 5, 1).date()
+                reco_date = result[0]
+
+            statement = text(
+                """
+                SELECT MAX(transactiondate)
+                FROM transactions
+                WHERE PortfolioID = :portfolio_id;
+            """
+            )
+            result = session.execute(statement, {"portfolio_id": self.id}).first()
+            trade_date = None
+            if result and result[0]:
+                trade_date = result[0].date()
+
+            statement = text(
+                """
+                SELECT MAX(transactiondate)
+                FROM cashtransactions
+                WHERE PortfolioID = :portfolio_id;
+            """
+            )
+            result = session.execute(statement, {"portfolio_id": self.id}).first()
+            if result and result[0]:
+                cash_date = result[0]
+
+            max_date = trade_date
+
+            if max_date is None or (
+                reco_date and reco_date.toordinal() > max_date.toordinal()
+            ):
+                max_date = reco_date
+
+            if max_date is None or (
+                cash_date and cash_date.toordinal() > max_date.toordinal()
+            ):
+                max_date = cash_date
+
+            if max_date:
+                return max_date
+            else:
+                return datetime(1975, 5, 1).date()
 
     def manage_lots(
-        self, product: Product, quantity, transaction_type, price=None, as_of_date=None
+        self,
+        product: Product,
+        quantity: Decimal,
+        transaction_type,
+        price: Union[Decimal, None] = None,
+        as_of_date: Union[date, None] = None,
     ):
         """
         Adds to the Lots table for a purchase or removes lots in FIFO order for a sale.
@@ -861,7 +917,7 @@ class Portfolio(Base):
                             session.execute(
                                 statement, {"quantity": quantity, "lot_id": lot_id}
                             )
-                            quantity = 0  # All shares sold
+                            quantity = Decimal(0)  # All shares sold
                     statement = text(
                         """
                         DELETE FROM Lots WHERE Quantity = 0;
@@ -1128,6 +1184,25 @@ class Portfolio(Base):
                 return result[0]
         return None
 
+    def first_deposit(self):
+        with Session() as session:
+            statement = text(
+                """
+                SELECT TransactionDate
+                FROM CashTransactions
+                WHERE PortfolioID = :portfolio_id AND TransactionType in ('DEPOSIT','INVEST')
+                ORDER BY TransactionDate ASC
+                LIMIT 1;
+            """
+            )
+            result = session.execute(
+                statement,
+                {"portfolio_id": self.id},
+            ).first()
+            if result:
+                return result[0]
+        return None
+
     def get_performance(self, end_date=None):
         with Session() as session:
             if end_date is None:
@@ -1137,10 +1212,19 @@ class Portfolio(Base):
                 SELECT Date, stock_value, invested, cash, bank, stock_value + cash + bank as total
                 FROM Portfolio_Performance
                 WHERE Portfolio_ID = :portfolio_id AND Date <= :end_date
+                AND Date >= :first_deposit
                 ORDER BY Date ASC;
             """
             )
-            df = pd.read_sql(statement, session.bind, params={"portfolio_id": self.id, "end_date": end_date})  # type: ignore
+            df = pd.read_sql(
+                statement,
+                session.bind,
+                params={  # type: ignore
+                    "portfolio_id": self.id,
+                    "end_date": end_date,
+                    "first_deposit": self.first_deposit(),
+                },
+            )  # type: ignore
             return df
 
     def active_recommendations(
@@ -1188,6 +1272,120 @@ class Portfolio(Base):
         ret_recommendations.sort(key=lambda x: x.strength, reverse=True)
         recommendation_cache[cache_key] = ret_recommendations
         return ret_recommendations
+
+    def _daily_returns(self, as_of_date: date):
+        if as_of_date is None:
+            target_date = self.last_active()
+        else:
+            target_date = as_of_date
+        df = self.get_performance(target_date)
+
+        if not df.empty:
+            df["daily_return"] = df["total"].pct_change()
+        return df
+
+    def cumulative_returns(self, as_of_date: Optional[date] = None):
+        if as_of_date is None:
+            target_date = self.last_active()
+        else:
+            target_date = as_of_date
+
+        daily_returns = self._daily_returns(target_date)
+        if daily_returns.empty:
+            return daily_returns
+        cumulative_returns = (1 + daily_returns["daily_return"]).cumprod() - 1
+
+        return cumulative_returns
+
+    def drawdown_metrics(self, as_of_date: Optional[date] = None):
+        if as_of_date is None:
+            target_date = self.last_active()
+        else:
+            target_date = as_of_date
+
+        cum_returns = self.cumulative_returns(target_date)
+        if cum_returns.empty:
+            return {
+                "average_drawdown": None,
+                "max_drawdown": None,
+                "average_duration_days": None,
+                "drawdown_count": None,
+            }
+
+        # Calculate drawdowns
+        peak = cum_returns.cummax()
+        drawdown = (cum_returns - peak) / peak
+
+        # Calculate maximum drawdown
+        max_drawdown = drawdown.min()
+
+        # Identify drawdown & recovery periods
+        is_recovery = drawdown == 0
+        drawdown_starts = (~is_recovery & is_recovery.shift(1)).fillna(False)
+        drawdown_ends = (is_recovery & (~is_recovery).shift(1)).fillna(False)
+
+        # Count drawdown periods
+        drawdown_count = drawdown_starts.sum()
+
+        # Calculate average drawdown
+        average_drawdown = drawdown[drawdown < 0].mean()  # type: ignore
+
+        # Calculate drawdown durations and average duration
+        drawdown_durations = [(end - start).days for start, end in zip(drawdown_starts[drawdown_starts].index, drawdown_ends[drawdown_ends].index) if start < end]  # type: ignore
+        average_duration = (
+            sum(drawdown_durations) / len(drawdown_durations)
+            if drawdown_durations
+            else 0
+        )
+
+        # Prepare results
+        metrics = {
+            "average_drawdown": average_drawdown,
+            "max_drawdown": max_drawdown,
+            "average_duration_days": average_duration,
+            "drawdown_count": drawdown_count,
+            # Recovery calculation would require a more detailed approach to identify each drawdown and recovery period
+        }
+
+        if math.isinf(metrics["max_drawdown"]):
+            metrics["max_drawdown"] = None
+        if math.isinf(metrics["average_drawdown"]):
+            metrics["average_drawdown"] = None
+
+        metrics["average_duration_days"] = metrics["average_duration_days"]
+        metrics["drawdown_count"] = int(metrics["drawdown_count"])
+
+        return metrics
+
+    def sharpe_ratio(
+        self, as_of_date: Optional[date] = None, annual_risk_free_rate=0.02, window=30
+    ):
+        if as_of_date is None:
+            target_date = self.last_active()
+        else:
+            target_date = as_of_date
+
+        # Convert annual risk-free rate to daily
+        daily_risk_free_rate = (1 + annual_risk_free_rate) ** (1 / 252) - 1
+        df = self._daily_returns(target_date)
+
+        if df.empty:
+            return 0
+
+        # Calculate excess returns
+        df["excess_returns"] = df["daily_return"] - daily_risk_free_rate
+
+        # Calculate rolling Sharpe Ratio
+        df["rolling_sharpe_ratio"] = (
+            df["excess_returns"].rolling(window=window).mean()
+            / df["excess_returns"].rolling(window=window).std()
+        ) * (
+            252**0.5
+        )  # Annualize
+
+        # ratio = df.loc[df['date'] <= target_date, 'rolling_sharpe_ratio'].values[-1]
+        ratio = df.loc[df["date"] <= target_date, "rolling_sharpe_ratio"].mean()
+        return ratio
 
 
 # get all the portfolios in the database
