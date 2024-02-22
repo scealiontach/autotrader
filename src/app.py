@@ -106,9 +106,13 @@ def update_market_data():
     return redirect(url_for("home"))
 
 
-COL_CUMULATIVE_RETURN = ".cum_ret"
-COL_PCT_CHANGE_DAILY = ".pct_change_daily"
-COL_CLOSE = ".close"
+COL_CUMULATIVE_RETURN = "cum_ret"
+COL_PCT_CHANGE_DAILY = "pct_change_daily"
+COL_CLOSE = "close"
+COL_TOTAL = "total"
+
+COL_ROW_INDEX = "row_index"
+COL_DATE = "date"
 
 
 @app.route("/portfolios/chart", methods=["GET"])
@@ -124,6 +128,18 @@ def portfolios_chart():
 
     df = None
 
+    strat_filter = request.args.get("strategy", None, type=str)
+    if strat_filter and "," in strat_filter:
+        strat_filter = strat_filter.split(",")
+    else:
+        strat_filter = [strat_filter]
+    if strat_filter:
+        portfolios = [p for p in portfolios if p.strategy in strat_filter]
+
+    active_filter = request.args.get("active", 0, type=bool)
+    if active_filter:
+        portfolios = [p for p in portfolios if p.is_active == active_filter]
+
     graph_col = COL_CUMULATIVE_RETURN
     last_active = None
     y_cols = []
@@ -134,53 +150,34 @@ def portfolios_chart():
         pf_df = p.get_performance()
         if len(pf_df) <= 0:
             continue
-        y_cols.append(str(p.id) + graph_col)
-        pf_df[str(p.id) + COL_PCT_CHANGE_DAILY] = pf_df["total"].pct_change()
-        pf_df[str(p.id) + COL_CUMULATIVE_RETURN] = (
-            1 + pf_df[str(p.id) + COL_PCT_CHANGE_DAILY]
+
+        y_cols.append(str(p.id) + "." + graph_col)
+        pf_df[str(p.id) + "." + COL_PCT_CHANGE_DAILY] = pf_df["total"].pct_change()
+        pf_df[str(p.id) + "." + COL_CUMULATIVE_RETURN] = (
+            1 + pf_df[str(p.id) + "." + COL_PCT_CHANGE_DAILY]
         ).cumprod() - 1
         pf_df = pf_df[
             [
-                "date",
-                str(p.id) + COL_CUMULATIVE_RETURN,
-                str(p.id) + COL_PCT_CHANGE_DAILY,
+                COL_DATE,
+                str(p.id) + "." + COL_CUMULATIVE_RETURN,
+                str(p.id) + "." + COL_PCT_CHANGE_DAILY,
             ]
         ]
+        pf_df[COL_ROW_INDEX] = pf_df.index + 1
+        pf_df.set_index(COL_ROW_INDEX)
+
+        del pf_df[COL_DATE]
         if df is None:
             df = pf_df
         else:
-            df = pd.merge(df, pf_df, on="date", how="outer")
+            df = pd.merge(df, pf_df, on=COL_ROW_INDEX, how="outer")
+            df.set_index(COL_ROW_INDEX)
         if last_active is None or p.last_active() > last_active:
             last_active = p.last_active()
         if first_deposit is None or p.first_deposit() < first_deposit:
             first_deposit = p.first_deposit()
 
-    if last_active is None or p.last_active() > last_active:
-        last_active = today()
-    for index in ALL_INDEXES:
-        product = Product.from_symbol(index)
-        CACHE.load_data(product.id)
-        y_cols.append(product.symbol + graph_col)
-        index_df = CACHE.get_data(product.id, first_deposit, last_active)
-        index_df.rename(
-            columns={
-                "closingprice": product.symbol + COL_CLOSE,
-                "volume": product.symbol + ".volume",
-            },
-            inplace=True,
-        )
-        index_df[product.symbol + COL_PCT_CHANGE_DAILY] = index_df[
-            product.symbol + COL_CLOSE
-        ].pct_change()
-        index_df[product.symbol + COL_CUMULATIVE_RETURN] = (
-            1 + index_df[product.symbol + COL_PCT_CHANGE_DAILY]
-        ).cumprod() - 1
-        if df is None:
-            df = index_df
-        else:
-            df = pd.merge(df, index_df, on="date", how="outer")
-
-    fig = px.line(df, x="date", y=y_cols, title="vs INDEX")
+    fig = px.line(df, x=COL_ROW_INDEX, y=y_cols, title="Comparative")
     graph_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
     return render_template("portfolios_chart.html", graphJSON=graph_json)
@@ -329,20 +326,20 @@ def portfolio_detail(portfolio_id):
             graph_col = COL_CUMULATIVE_RETURN
             y_cols = []
             if len(pf_df) > 0:
-                pf_df[str(portfolio.id) + COL_PCT_CHANGE_DAILY] = pf_df[
+                pf_df[str(portfolio.id) + "." + COL_PCT_CHANGE_DAILY] = pf_df[
                     "total"
                 ].pct_change()
-                pf_df[str(portfolio.id) + COL_CUMULATIVE_RETURN] = (
-                    1 + pf_df[str(portfolio.id) + COL_PCT_CHANGE_DAILY]
+                pf_df[str(portfolio.id) + "." + COL_CUMULATIVE_RETURN] = (
+                    1 + pf_df[str(portfolio.id) + "." + COL_PCT_CHANGE_DAILY]
                 ).cumprod() - 1
                 pf_df = pf_df[
                     [
-                        "date",
-                        str(portfolio.id) + COL_CUMULATIVE_RETURN,
-                        str(portfolio.id) + COL_PCT_CHANGE_DAILY,
+                        COL_DATE,
+                        str(portfolio.id) + "." + COL_CUMULATIVE_RETURN,
+                        str(portfolio.id) + "." + COL_PCT_CHANGE_DAILY,
                     ]
                 ]
-                y_cols.append(str(portfolio.id) + graph_col)
+                y_cols.append(str(portfolio.id) + "." + graph_col)
                 df = pf_df
 
             for index in ALL_INDEXES:
@@ -355,26 +352,26 @@ def portfolio_detail(portfolio_id):
                     continue
                 index_df.rename(
                     columns={
-                        "closingprice": product.symbol + COL_CLOSE,
+                        "closingprice": product.symbol + "." + COL_CLOSE,
                         "volume": product.symbol + ".volume",
                     },
                     inplace=True,
                 )
-                index_df[product.symbol + COL_PCT_CHANGE_DAILY] = index_df[
-                    product.symbol + COL_CLOSE
+                index_df[product.symbol + "." + COL_PCT_CHANGE_DAILY] = index_df[
+                    product.symbol + "." + COL_CLOSE
                 ].pct_change()
-                index_df[product.symbol + COL_CUMULATIVE_RETURN] = (
-                    1 + index_df[product.symbol + COL_PCT_CHANGE_DAILY]
+                index_df[product.symbol + "." + COL_CUMULATIVE_RETURN] = (
+                    1 + index_df[product.symbol + "." + COL_PCT_CHANGE_DAILY]
                 ).cumprod() - 1
                 if df is None:
                     df = index_df
                 else:
 
-                    df = pd.merge(df, index_df, on="date", how="outer")
-                y_cols.append(product.symbol + graph_col)
+                    df = pd.merge(df, index_df, on=COL_DATE, how="outer")
+                y_cols.append(product.symbol + "." + graph_col)
 
             if df is not None:
-                fig = px.line(df, x="date", y=y_cols, title="vs INDEX")
+                fig = px.line(df, x=COL_DATE, y=y_cols, title="vs INDEX")
                 graph_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
             else:
                 graph_json = None

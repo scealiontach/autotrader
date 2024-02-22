@@ -281,7 +281,7 @@ def _process_buy_recommendations(
     return actions
 
 
-def get_trading_dates(portfolio: Portfolio, max_days=1460):
+def get_trading_dates(portfolio: Portfolio, max_days=1260):
     with Session() as session:
         if object_session(portfolio) is None:
             session.add(portfolio)
@@ -303,7 +303,7 @@ def get_trading_dates(portfolio: Portfolio, max_days=1460):
             SELECT DISTINCT m.Date FROM MarketData m, products p
             where m.Date > :earliest_date and p.ProductID = m.ProductID
             and p.sector not in ('Cryptocurrency')
-            ORDER BY m.Date
+            ORDER BY m.Date ASC LIMIT :max_days
             """
         )
         result = session.execute(
@@ -493,7 +493,7 @@ REINVEST_AMT_RANGE = [100]
 BANK_THRESHOLD = [1000]
 WITH_CRYPTO = ["only", "no"]
 MAX_EXPOSURE = [75]
-YEARS_BACK = [1, 2, 5, 10, 20]
+YEARS_BACK = [5, 10, 15, 20, 25, 30, 35, 40]
 
 LOCAL_STRATEGIES = [
     "bollinger",

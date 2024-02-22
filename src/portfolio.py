@@ -1218,7 +1218,7 @@ class Portfolio(Base):
             )
             df = pd.read_sql(
                 statement,
-                session.bind,
+                session.bind,  # type: ignore
                 params={  # type: ignore
                     "portfolio_id": self.id,
                     "end_date": end_date,
