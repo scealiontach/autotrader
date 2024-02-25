@@ -106,7 +106,7 @@
     </table>
   </div>
   <div id="recommendations" class="mdl-cell mdl-cell--4-col">
-    <h5>Recommendations</h5>
+    <h5>Favored Recommendations</h5>
     <table class="mdl-data-table">
       <thead>
         <tr>
@@ -118,17 +118,17 @@
         </tr>
       </thead>
       <tbody>
-        {%- for recommendation in portfolio.active_recommendations  -%}
-          <tr>
-            <td>{{ link_to_symbol(recommendation.symbol) }}</td>
-            <td>
-              {{ pfdialog.btn(recommendation.action+'_'+recommendation.symbol,recommendation.action) }}
-            </td>
-            <td>{{ currency_fmt(recommendation.last) }}</td>
-            <td>{{ recommendation.strategy }}</td>
-            <td>{{ "%3.3f" | format(recommendation.strength) }}</td>
-          </tr>
-        {%- endfor -%}
+          {%- for recommendation in portfolio.active_recommendations  -%}
+            <tr>
+              <td>{{ link_to_symbol(recommendation.symbol) }}</td>
+              <td>
+                {{ pfdialog.btn(recommendation.action+'_'+recommendation.symbol,recommendation.action) }}
+              </td>
+              <td>{{ currency_fmt(recommendation.last) }}</td>
+              <td>{{ recommendation.strategy }}</td>
+              <td>{{ "%3.3f" | format(recommendation.strength) }}</td>
+            </tr>
+          {%- endfor -%}
       </tbody>
     </table>
   </div>
@@ -167,6 +167,35 @@
       </tbody>
     </table>
   </div>
+  {%- if not portfolio.is_active -%}
+  <div id="strategy_recommendations" class="mdl-cell mdl-cell--4-col">
+    <h5>Recommendation Grid</h5>
+    <table class="mdl-data-table">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          {%- for strategy in strategies|sort -%}
+          <th>{{strategy}}</th>
+          {%- endfor -%}
+        </tr>
+      </thead>
+      <tbody>
+          {%- for symbol in strat_recos|sort -%}
+            <tr>
+              <td>{{ link_to_symbol(symbol) }}</td>
+              {%- for strategy in strategies|sort -%}
+              {%- if strategy in strat_recos[symbol] -%}
+              <td>{{strat_recos[symbol][strategy]}}</td>
+              {%- else -%}
+              <td></td>
+              {%- endif -%}
+              {%- endfor -%}
+            </tr>
+          {%- endfor -%}
+      </tbody>
+    </table>
+  </div>
+  {%- endif -%}
 </div>
 {{ chart.chart('chart',graphJSON) }}
 {{ pfdialog.dialog('invest_portfolio', invest_form, url_for('portfolio_invest', portfolio_id=portfolio.id), 'Add Investment') }}

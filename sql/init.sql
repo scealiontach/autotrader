@@ -138,3 +138,13 @@ CREATE TABLE portfolio_performance
   bank NUMERIC(15, 2) NOT NULL,
   FOREIGN KEY (portfolio_id) REFERENCES portfolios(portfolioid)
 );
+
+CREATE TABLE simulation_tracker
+(
+  id SERIAL PRIMARY KEY,
+  portfolio_id INTEGER NOT NULL unique,
+  first_date DATE NOT NULL,
+  run_length_days INTEGER NOT NULL DEFAULT 365,
+  last_sim_date DATE NOT NULL,
+  FOREIGN KEY (portfolio_id) REFERENCES portfolios(portfolioid)
+);

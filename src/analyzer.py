@@ -1,4 +1,6 @@
 import logging as log
+import math
+from os import close
 import statistics
 from datetime import date, timedelta
 from decimal import Decimal
@@ -151,6 +153,7 @@ class ProductAnalyzer:
                 # Calculate daily changes
                 changes = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
 
+                changes = list(filter(lambda x: not math.isnan(x), changes))
                 # Separate gains and losses
                 gains = [max(change, Decimal(0)) for change in changes]
                 losses = [-min(change, Decimal(0)) for change in changes]
@@ -174,7 +177,7 @@ class ProductAnalyzer:
                 return rsi
         except Exception as e:
             log.error(f"(E02) An error occurred: {e}")
-            return None
+            raise e
 
     def engulfing(self):
         """
@@ -274,10 +277,15 @@ class ProductAnalyzer:
             lows = [row[1] for row in rows]
             closing_price = rows[0][2]  # Most recent close price
 
-            # Calculate highest high and lowest low
+            highs = list(filter(lambda x: not math.isnan(x), highs))
+            lows = list(filter(lambda x: not math.isnan(x), lows))
+
             highest_high = max(highs)
+            # lowest_low is the first element in the list
             lowest_low = min(lows)
 
+            if closing_price is None or math.isnan(closing_price):
+                return 0
             # Evaluate the signal
             if closing_price > highest_high:
                 signal = 1  # Buy signal
@@ -320,6 +328,7 @@ class ProductAnalyzer:
             ).all()
 
             close_prices = [row[1] for row in rows]
+            close_prices = list(filter(lambda x: not math.isnan(x), close_prices))
 
             # Ensure we have enough data points
             if len(close_prices) < window:

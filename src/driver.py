@@ -34,7 +34,7 @@ def make_recommendations(portfolio: Portfolio, as_of_eod=None) -> list[Recommend
     as of a given date.
     """
     recommendations = []
-    products = portfolio.eligible_products()
+    products = portfolio.eligible_products(as_of_date=as_of_eod)
 
     last_recommender = None
     for p in products:
@@ -281,35 +281,91 @@ def _process_buy_recommendations(
     return actions
 
 
+def sim_started(portfolio: Portfolio):
+    with Session() as session:
+        if object_session(portfolio) is None:
+            session.add(portfolio)
+        simulation_tracker_stmt = text(
+            """
+            SELECT first_date, run_length_days, last_sim_date FROM simulation_tracker WHERE Portfolio_ID = :portfolio_id
+            """
+        )
+        row = session.execute(
+            simulation_tracker_stmt, {"portfolio_id": portfolio.id}
+        ).first()
+        if row:
+            return True
+        else:
+            return False
+
+
 def get_trading_dates(portfolio: Portfolio, max_days=1260):
     with Session() as session:
         if object_session(portfolio) is None:
             session.add(portfolio)
-        last_date_stmt = text(
+
+        simulation_tracker_stmt = text(
             """
-        select max(recommendationdate) from tradingrecommendations where portfolioID = :portfolio_id
-        """
+            SELECT first_date, run_length_days, last_sim_date FROM simulation_tracker WHERE Portfolio_ID = :portfolio_id
+            """
         )
-        row = session.execute(last_date_stmt, {"portfolio_id": portfolio.id}).fetchone()
-        if row and row[0]:
-            earliest_date = row[0]
+        row = session.execute(
+            simulation_tracker_stmt, {"portfolio_id": portfolio.id}
+        ).first()
+        if row:
+            first_date, run_length_days, last_sim_date = row
         else:
-            earliest_date = portfolio.first_deposit()
-            if earliest_date is None:
-                earliest_date = datetime.today() - timedelta(days=max_days)
+            first_date = portfolio.first_deposit()
+            if first_date is None:
+                raise ValueError("No first deposit date found")
+            run_length_days = max_days
+            last_sim_date = first_date - timedelta(days=1)
+            session.expire_on_commit = False
 
         statement = text(
             """
             SELECT DISTINCT m.Date FROM MarketData m, products p
-            where m.Date > :earliest_date and p.ProductID = m.ProductID
+            where m.Date > :last_sim_date
+            and m.Date <= :max_date
+            and p.ProductID = m.ProductID
             and p.sector not in ('Cryptocurrency')
-            ORDER BY m.Date ASC LIMIT :max_days
+            ORDER BY m.Date ASC
             """
         )
         result = session.execute(
-            statement, {"earliest_date": earliest_date, "max_days": max_days}
-        ).fetchall()
-        return [row[0] for row in result]
+            statement,
+            {
+                "max_date": first_date + timedelta(days=run_length_days),
+                "last_sim_date": last_sim_date,
+            },
+        )
+        if result is None:
+            return []
+        trade_dates = list([row[0] for row in result])
+        return trade_dates
+
+
+def update_sim_date(portfolio: Portfolio, run_length_days, trade_date):
+    with Session() as session:
+        first_date = portfolio.first_deposit()
+        update_stmt = text(
+            """
+            INSERT INTO simulation_tracker (Portfolio_ID, first_date, run_length_days, last_sim_date)
+            VALUES (:portfolio_id, :first_date, :run_length_days, :trade_date)
+            ON CONFLICT (Portfolio_ID) DO UPDATE SET
+              run_length_days = :run_length_days, last_sim_date = :trade_date
+            """
+        )
+        session.execute(
+            update_stmt,
+            {
+                "trade_date": trade_date,
+                "first_date": first_date,
+                "run_length_days": run_length_days,
+                "portfolio_id": portfolio.id,
+            },
+        )
+        session.commit()
 
 
 def reset_portfolio(portfolio: Portfolio, full=False):
@@ -371,6 +427,11 @@ def reset_portfolio(portfolio: Portfolio, full=False):
 
 def reset_all_portfolios():
     with Session() as session:
+        del_sim_tracker = text(
+            """
+            DELETE FROM simulation_tracker
+            """
+        )
         del_portfoliopositions = text(
             """
             DELETE FROM PortfolioPositions
@@ -396,6 +457,7 @@ def reset_all_portfolios():
             DELETE FROM Lots
             """
         )
+        session.execute(del_sim_tracker)
         session.execute(del_portfoliopositions)
         session.execute(del_transactions)
         session.execute(del_cashtransactions)
@@ -404,8 +466,9 @@ def reset_all_portfolios():
         session.commit()
 
 
-def exercise_strategy(portfolio: Portfolio, report=True):
-    trading_dates = get_trading_dates(portfolio)
+def exercise_strategy(portfolio: Portfolio, report=True, iteration_count=10):
+    max_days = 5 * 365
+    trading_dates = get_trading_dates(portfolio, max_days=max_days)
     if len(trading_dates) <= 0:
         return Decimal(0)
 
@@ -414,6 +477,7 @@ def exercise_strategy(portfolio: Portfolio, report=True):
 
     with Session() as session:
         # with Profiler(interval=0.001) as profiler:
+        count = 0
         for trade_date in trading_dates:
             session.add(portfolio)
             session.refresh(portfolio)
@@ -422,6 +486,11 @@ def exercise_strategy(portfolio: Portfolio, report=True):
             )
             last_trade_date = trade_date
             run_day(portfolio, trade_date, report=report)
+            update_sim_date(portfolio, max_days, trade_date)
+            if count < iteration_count:
+                count += 1
+            else:
+                break
 
     # profiler.print()
     banked_cash = portfolio.bank_balance(last_trade_date)
@@ -436,6 +505,13 @@ def run_day(portfolio: Portfolio, trade_date, execute=True, report=True):
     recommendations = make_recommendations(portfolio, trade_date)
     recommendations.sort(key=lambda x: x.strength, reverse=True)
     planned_actions = make_plan(portfolio, recommendations, trade_date)
+
+    active_recs = [action for action in planned_actions if action.action != HOLD]
+    if len(active_recs) == 0 and len(recommendations) > 0:
+        cash = portfolio.cash_balance(trade_date)
+        log.info(
+            f"pid={portfolio.id} No planned actions for {trade_date} had {len(active_recs)} recommendations, cash={cash}"
+        )
 
     if execute:
         execute_plan(portfolio, trade_date, planned_actions, report=report)
@@ -528,18 +604,24 @@ def parameter_search():
     )
 
     initial_combinations = list(initial_combinations)
+    portfolios_to_test: list[Portfolio] = []
     for combination in initial_combinations:
         name = f"Parameter Search {combination}"
         with Session() as session:
             session.expire_on_commit = False
             portfolio = portfolio_for_name(name)
-            initialize_portfolio(portfolio, full=True)
-            initialwallet_date = datetime.today() - timedelta(weeks=52 * combination[7])
-            portfolio.invest(
-                Decimal(INITIAL_WALLET_RANGE[0]),
-                initialwallet_date,
-                INITIAL_DEPOSIT_DESCRIPTION,
-            )
+
+            if not sim_started(portfolio):
+                initialize_portfolio(portfolio, full=True)
+                initialwallet_date = datetime.today() - timedelta(
+                    weeks=52 * combination[7]
+                )
+                portfolio.invest(
+                    Decimal(INITIAL_WALLET_RANGE[0]),
+                    initialwallet_date,
+                    INITIAL_DEPOSIT_DESCRIPTION,
+                    report=False,
+                )
             portfolio.reserve_cash_percent = combination[0]
             portfolio.reinvest_period = combination[1]
             portfolio.reinvest_amt = combination[2]
@@ -553,25 +635,24 @@ def parameter_search():
 
             session.add(portfolio)
             session.commit()
+            portfolios_to_test.append(portfolio)
+
+    portfolios_to_test.sort(key=lambda x: x.name)
 
     max_processes = psutil.cpu_count(logical=False) or 1
     max_processes = max_processes - 1
     max_processes = max(max_processes, 1)
 
     pipes = []
-    for combination in initial_combinations:
-        name = f"Parameter Search {combination}"
+    for p in portfolios_to_test:
 
-        # Configure logging for 'sqlalchemy.engine' to output at the INFO level
-
-        portfolio = portfolio_for_name(name)
         log.info(f"Testing parameters {combination}")
 
         pipe = subprocess.Popen(
             [
                 sys.executable,
                 __file__,
-                str(portfolio.id),
+                str(p.id),
             ]
         )
         pipes.append(pipe)
@@ -598,10 +679,6 @@ def main():
 
         # with Profiler(interval=0.0001) as profile:
 
-        initialize_portfolio(portfolio)
-        # portfolio.invest(
-        #     initial_wallet, "1975-04-24", INITIAL_DEPOSIT_DESCRIPTION, report=False
-        # )
         exercise_strategy(portfolio, report=False)
         # profile.print()
     else:

@@ -30,6 +30,7 @@
           <th class="mdl-data-table__cell--non-numeric">Total</th>
           <th class="mdl-data-table__cell--non-numeric">Sharpe Ratio</th>
           <th class="mdl-data-table__cell--non-numeric">ROI</th>
+          <th class="mdl-data-table__cell--non-numeric">Risk Weighted ROI</th>
           <th class="mdl-data-table__cell--non-numeric">Last Active</th>
           <th class="mdl-data-table__cell--non-numeric">Actions</th>
         </tr>
@@ -53,7 +54,12 @@
               {{ currency_fmt(item.value+item.cash+item.bank) }}
             </td>
             {{ infobox.signal_cell(item.sharpe_ratio,"%4.4f",low=0, high=1) }}
-            {{ infobox.gradient_cell(item.roi, "%4.2f", low_thresholds=[-60,-50,-40,-30,-20,-10]) }}
+            {{ infobox.gradient_cell(item.roi, "%4.2f", high_thresholds=[1600, 800, 400, 200, 100, 50], low_thresholds=[-60,-50,-40,-30,-20,-10]) }}
+            {%- if item.sharpe_ratio > 0 -%}
+            {{ infobox.gradient_cell((item.roi|float)*item.sharpe_ratio, "%4.2f", high_thresholds=[1600, 800, 400, 200, 100, 50],low_thresholds=[-60,-50,-40,-30,-20,-10]) }}
+            {%- else -%}
+            {{ infobox.gradient_cell(item.roi, "%4.2f", high_thresholds=[1600, 800, 400, 200, 100, 50],low_thresholds=[-60,-50,-40,-30,-20,-10]) }}
+            {%- endif -%}
             <td class="mdl-data-table__cell--non-numeric">
               {{ item.last_active }}
             </td>
@@ -91,7 +97,7 @@
       var tf = new TableFilter('portfolio_list', {
         base_path: '{{tf_path()}}',
         col_2: 'select',
-        col_types: ['number', 'string', 'string','number', 'number', 'number', 'number', 'string'],
+        col_types: ['number', 'string', 'string','number', 'number', 'number', 'number','number', 'string'],
         extensions: [{
           name: 'sort',
           images_path: '{{tf_path()}}style/themes/'

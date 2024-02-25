@@ -7,7 +7,6 @@ from types import NoneType
 from typing import Optional, Union
 
 import pandas as pd
-from plotly.validators.histogram import cumulative
 from cachetools import LFUCache, TTLCache
 from sqlalchemy import (
     DECIMAL,
@@ -378,15 +377,19 @@ class Portfolio(Base):
                 return result[0]
         return "None"
 
-    def eligible_products(self):
+    def eligible_products(self, as_of_date: Optional[date] = None):
         with Session() as session:
             query = """
                 SELECT p.ProductID, p.Symbol, count(1)
                 FROM Products p, marketdata m
                 WHERE p.productid=m.productid
-                and m.date < :as_of_date
+                and m.date <= :as_of_date
                 and p.isactive = true
             """
+            if as_of_date is None:
+                target_date = self.last_active()
+            else:
+                target_date = as_of_date
             sectors_allowed: list = self.sectors_allowed  # type: ignore
             sectors_forbidden: list = self.sectors_forbidden  # type: ignore
             if self.dividend_only:
@@ -401,9 +404,7 @@ class Portfolio(Base):
                 query += f" AND p.sector not in {sectors}"
             query += " GROUP BY p.ProductID, p.Symbol"
             statement = text(query)
-            result = session.execute(
-                statement, {"as_of_date": self.last_active()}
-            ).all()
+            result = session.execute(statement, {"as_of_date": target_date}).all()
             return result
 
     def positions(self) -> list[Position]:
@@ -576,6 +577,19 @@ class Portfolio(Base):
             total_value = self.value(report_date)
             total_invest = self.invest_balance(report_date)
 
+            del_statement = text(
+                """
+                DELETE FROM Portfolio_Performance WHERE Portfolio_ID = :portfolio_id AND Date = :date;
+                """
+            )
+            session.execute(
+                del_statement,
+                {
+                    "portfolio_id": self.id,
+                    "date": report_date,
+                },
+            )
+            session.commit()
             statement = text(
                 """
                 INSERT INTO Portfolio_Performance (Portfolio_ID, Date, stock_value, invested, cash, bank)
@@ -764,7 +778,7 @@ class Portfolio(Base):
                 self.add_deposit(
                     Decimal(quantity) * price,
                     transaction_date,
-                    f"Sell {quantity} shares of {product.id}",
+                    f"Sell {quantity} shares of {product.symbol}",
                     report=report,
                 )
                 self.add_debit(
@@ -1227,8 +1241,8 @@ class Portfolio(Base):
             )  # type: ignore
             return df
 
-    def active_recommendations(
-        self, as_of_eod: Union[date, None] = None
+    def strategy_recommendation(
+        self, strategy: str, as_of_eod: Union[date, None] = None
     ) -> list[Recommendation]:
         """
         Make trading recommendations based on the given portfolio and the market conditions
@@ -1242,7 +1256,7 @@ class Portfolio(Base):
         else:
             target_date = as_of_eod
 
-        cache_key = f"active_recommendations-{self.id}-{target_date}"
+        cache_key = f"active_recommendations-{self.id}-{strategy}-{target_date}"
         if cache_key in recommendation_cache:
             return recommendation_cache[cache_key]
 
@@ -1251,6 +1265,7 @@ class Portfolio(Base):
 
         for p in products:
             recommender = self.recommender_for(p.symbol, target_date)
+            recommender.strategy = strategy
             rec = recommender.recommend()
             rec.as_of = target_date
             recommendations.append(rec)
@@ -1272,6 +1287,11 @@ class Portfolio(Base):
         ret_recommendations.sort(key=lambda x: x.strength, reverse=True)
         recommendation_cache[cache_key] = ret_recommendations
         return ret_recommendations
+
+    def active_recommendations(
+        self, as_of_eod: Union[date, None] = None
+    ) -> list[Recommendation]:
+        return self.strategy_recommendation(self.strategy, as_of_eod)
 
     def _daily_returns(self, as_of_date: date):
         if as_of_date is None:
@@ -1314,13 +1334,18 @@ class Portfolio(Base):
 
         # Calculate drawdowns
         peak = cum_returns.cummax()
+
         drawdown = (cum_returns - peak) / peak
+        drawdown = drawdown.dropna()
+        drawdown = drawdown[drawdown != -(math.inf)]  # type: ignore
+        drawdown = drawdown[drawdown != (math.inf)]
 
         # Calculate maximum drawdown
         max_drawdown = drawdown.min()
 
         # Identify drawdown & recovery periods
         is_recovery = drawdown == 0
+
         drawdown_starts = (~is_recovery & is_recovery.shift(1)).fillna(False)
         drawdown_ends = (is_recovery & (~is_recovery).shift(1)).fillna(False)
 
@@ -1331,7 +1356,8 @@ class Portfolio(Base):
         average_drawdown = drawdown[drawdown < 0].mean()  # type: ignore
 
         # Calculate drawdown durations and average duration
-        drawdown_durations = [(end - start).days for start, end in zip(drawdown_starts[drawdown_starts].index, drawdown_ends[drawdown_ends].index) if start < end]  # type: ignore
+        drawdown_durations = [(end - start) for start, end in zip(drawdown_starts[drawdown_starts].index, drawdown_ends[drawdown_ends].index) if start < end]  # type: ignore
+
         average_duration = (
             sum(drawdown_durations) / len(drawdown_durations)
             if drawdown_durations
@@ -1357,7 +1383,7 @@ class Portfolio(Base):
 
         return metrics
 
-    def sharpe_ratio(
+    def sharpe_ratio_data(
         self, as_of_date: Optional[date] = None, annual_risk_free_rate=0.02, window=30
     ):
         if as_of_date is None:
@@ -1370,7 +1396,7 @@ class Portfolio(Base):
         df = self._daily_returns(target_date)
 
         if df.empty:
-            return 0
+            return df
 
         # Calculate excess returns
         df["excess_returns"] = df["daily_return"] - daily_risk_free_rate
@@ -1383,9 +1409,27 @@ class Portfolio(Base):
             252**0.5
         )  # Annualize
 
-        # ratio = df.loc[df['date'] <= target_date, 'rolling_sharpe_ratio'].values[-1]
-        ratio = df.loc[df["date"] <= target_date, "rolling_sharpe_ratio"].mean()
+        ratio = df.loc[df["date"] <= target_date, "rolling_sharpe_ratio"]
         return ratio
+
+    def sharpe_ratio(
+        self, as_of_date: Optional[date] = None, annual_risk_free_rate=0.02
+    ):
+        df = self.sharpe_ratio_data(
+            as_of_date=as_of_date, annual_risk_free_rate=annual_risk_free_rate
+        )
+        if df.empty:
+            return 0
+        else:
+            m = df.mean()
+            if isinstance(m, pd.Series):
+                return m[0]
+            elif math.isnan(m):
+                return 0
+            elif math.isinf(m):
+                return 0
+            else:
+                return m
 
 
 # get all the portfolios in the database

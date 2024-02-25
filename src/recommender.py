@@ -1,6 +1,7 @@
 import logging as log
 from datetime import date, timedelta
 from decimal import Decimal
+import math
 from types import NoneType
 from typing import Union
 
@@ -108,7 +109,12 @@ class Recommender:
         strategy = "sma_buy_hold"
         last_price = self.product.fetch_last_closing_price(self.end_date)
         strength = Decimal(0)
-        if sma is None or last_price is None:
+        if (
+            sma is None
+            or last_price is None
+            or math.isnan(sma)
+            or math.isnan(last_price)
+        ):
             return self._make_recommendation(
                 HOLD, strategy, strength, info={"sma": sma}
             )
@@ -217,6 +223,8 @@ class Recommender:
                 low_strength = abs(current_price - low_threshold) / low_threshold
                 high_strength = abs(current_price - high_threshold) / high_threshold
 
+                if math.isnan(current_price) or math.isnan(sma):
+                    return self._make_recommendation(HOLD, strategy, Decimal(0))
                 if current_price < low_threshold:
                     return self._make_recommendation(BUY, strategy, low_strength)
                 elif current_price > high_threshold:
@@ -299,7 +307,14 @@ class Recommender:
         sma_short = self.analyzer.sma(sma_short_period)
         sma_long = self.analyzer.sma(sma_long_period)
 
-        if rsi is None or sma_short is None or sma_long is None:
+        if (
+            rsi is None
+            or sma_short is None
+            or sma_long is None
+            or math.isnan(rsi)
+            or math.isnan(sma_short)
+            or math.isnan(sma_long)
+        ):
             return self._make_recommendation(HOLD, strategy, Decimal(0))
         if rsi > high:
             strength = (rsi - high) / high
@@ -338,7 +353,10 @@ class Recommender:
                 )
         elif sma_short < sma_long:
             # Downtrend condition
-            if rsi <= mid:
+            strength = Decimal(0)
+            if rsi != 0:
+                strength = (mid - rsi) / rsi
+            if rsi <= mid and rsi != 0:
                 return self._make_recommendation(
                     SELL,
                     strategy,
@@ -354,7 +372,7 @@ class Recommender:
                 return self._make_recommendation(
                     HOLD,
                     strategy,
-                    (mid - rsi) / rsi,
+                    strength,
                     info={
                         "rsi": rsi,
                         "sma_short": sma_short,
@@ -386,6 +404,7 @@ class Recommender:
         """
         with Session() as session:
             try:
+                session.expire_on_commit = False
                 for rec in recommendations:
                     product = Product.from_symbol(rec.symbol)
                     if product is None:

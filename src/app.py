@@ -1,10 +1,8 @@
+from decimal import Decimal
 import json
 import logging as log
 import secrets
 from datetime import date, timedelta
-from decimal import Decimal
-
-from wtforms import form
 
 import download_products
 import pandas as pd
@@ -14,7 +12,6 @@ import psutil
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.background import BackgroundScheduler
-from dateutil.utils import today
 from flask import Flask, g, jsonify, redirect, render_template, request, url_for
 from flask_bootstrap import Bootstrap5
 from flask_material import Material
@@ -27,7 +24,6 @@ from database import Session
 from driver import exercise_strategy, initialize_portfolio, make_recommendations
 from forms import (
     AddPortfolioForm,
-    BuyOrderForm,
     CashTransactionForm,
     DeletePortfolioForm,
     EditHolding,
@@ -35,7 +31,6 @@ from forms import (
     InvestPortfolioForm,
     OrderForm,
     ResetPortfolioForm,
-    SellOrderForm,
     SimulatePortfolioForm,
     StepPortfolioForm,
     UpdateMarketDataForm,
@@ -44,7 +39,7 @@ from market_data_cache import CACHE
 from models import CashTransaction, TradingRecommendation, Transaction
 from portfolio import Lot, Portfolio, Position
 from product import Product
-from recommender import STRATEGIES
+from recommender import STRATEGIES, Recommendation
 
 
 max_processes = psutil.cpu_count(logical=False) or 1
@@ -108,11 +103,29 @@ def update_market_data():
 
 COL_CUMULATIVE_RETURN = "cum_ret"
 COL_PCT_CHANGE_DAILY = "pct_change_daily"
-COL_CLOSE = "close"
+COL_CLOSE = "closingprice"
 COL_TOTAL = "total"
 
 COL_ROW_INDEX = "row_index"
 COL_DATE = "date"
+COL_VOLUME = "volume"
+
+
+def filter_portfolios_strategy(request):
+    def f(portfolio: Portfolio):
+        arg_filter = request.args.get("strategy", None, type=str)
+        if arg_filter:
+            if "," in arg_filter:
+                filter_list = arg_filter.split(",")
+            else:
+                filter_list = [arg_filter]
+            if portfolio.strategy not in filter_list:
+                return False
+            return True
+        else:
+            return True
+
+    return f
 
 
 @app.route("/portfolios/chart", methods=["GET"])
@@ -120,6 +133,8 @@ def portfolios_chart():
     portfolios: list[Portfolio] = (
         g.db_session.query(Portfolio).order_by(Portfolio.id.asc()).all()
     )
+    portfolios = list(filter(filter_portfolios_strategy(request), portfolios))
+
     sim_filter = request.args.get("simulated", 0, type=int)
     if sim_filter > 0:
         portfolios = [p for p in portfolios if p.is_active]
@@ -128,54 +143,57 @@ def portfolios_chart():
 
     df = None
 
-    strat_filter = request.args.get("strategy", None, type=str)
-    if strat_filter and "," in strat_filter:
-        strat_filter = strat_filter.split(",")
-    else:
-        strat_filter = [strat_filter]
-    if strat_filter:
-        portfolios = [p for p in portfolios if p.strategy in strat_filter]
-
     active_filter = request.args.get("active", 0, type=bool)
     if active_filter:
         portfolios = [p for p in portfolios if p.is_active == active_filter]
 
     graph_col = COL_CUMULATIVE_RETURN
-    last_active = None
+
     y_cols = []
-
-    first_deposit = None
-
+    df = None
+    select_cols = [COL_TOTAL]
+    portfolio_ids = []
     for p in portfolios:
         pf_df = p.get_performance()
-        if len(pf_df) <= 0:
+        if pf_df is None or len(pf_df) <= 0 or pf_df.empty:
             continue
 
-        y_cols.append(str(p.id) + "." + graph_col)
-        pf_df[str(p.id) + "." + COL_PCT_CHANGE_DAILY] = pf_df["total"].pct_change()
-        pf_df[str(p.id) + "." + COL_CUMULATIVE_RETURN] = (
-            1 + pf_df[str(p.id) + "." + COL_PCT_CHANGE_DAILY]
+        portfolio_ids.append(p.id)
+        col_prefix = str(p.id) + "."
+
+        y_cols.append(col_prefix + graph_col)
+
+        for col in pf_df.columns:
+            if col == COL_DATE:
+                continue
+            if col in select_cols:
+                pf_df.rename(columns={col: col_prefix + col}, inplace=True)
+            else:
+                del pf_df[col]
+
+        pf_df[col_prefix + COL_PCT_CHANGE_DAILY] = pf_df[
+            col_prefix + COL_TOTAL
+        ].pct_change()
+        pf_df[col_prefix + COL_CUMULATIVE_RETURN] = (
+            1 + pf_df[col_prefix + COL_PCT_CHANGE_DAILY]
         ).cumprod() - 1
-        pf_df = pf_df[
-            [
-                COL_DATE,
-                str(p.id) + "." + COL_CUMULATIVE_RETURN,
-                str(p.id) + "." + COL_PCT_CHANGE_DAILY,
-            ]
-        ]
+        del pf_df[col_prefix + COL_TOTAL]
+        del pf_df[col_prefix + COL_PCT_CHANGE_DAILY]
+
         pf_df[COL_ROW_INDEX] = pf_df.index + 1
         pf_df.set_index(COL_ROW_INDEX)
-
         del pf_df[COL_DATE]
+
         if df is None:
             df = pf_df
         else:
             df = pd.merge(df, pf_df, on=COL_ROW_INDEX, how="outer")
-            df.set_index(COL_ROW_INDEX)
-        if last_active is None or p.last_active() > last_active:
-            last_active = p.last_active()
-        if first_deposit is None or p.first_deposit() < first_deposit:
-            first_deposit = p.first_deposit()
+
+    if df is not None and not df.empty:
+        for p in portfolios:
+            if p.id not in portfolio_ids:
+                continue
+            col_prefix = str(p.id) + "."
 
     fig = px.line(df, x=COL_ROW_INDEX, y=y_cols, title="Comparative")
     graph_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
@@ -228,6 +246,8 @@ def portfolios():
     portfolios: list[Portfolio] = (
         g.db_session.query(Portfolio).order_by(Portfolio.id.asc()).all()
     )
+
+    portfolios = list(filter(filter_portfolios_strategy(request), portfolios))
 
     sim_filter = request.args.get("simulated", 0, type=int)
     if sim_filter > 0:
@@ -325,21 +345,20 @@ def portfolio_detail(portfolio_id):
             pf_df = portfolio.get_performance()
             graph_col = COL_CUMULATIVE_RETURN
             y_cols = []
+            col_prefix = str(portfolio.id) + "."
             if len(pf_df) > 0:
-                pf_df[str(portfolio.id) + "." + COL_PCT_CHANGE_DAILY] = pf_df[
-                    "total"
-                ].pct_change()
-                pf_df[str(portfolio.id) + "." + COL_CUMULATIVE_RETURN] = (
-                    1 + pf_df[str(portfolio.id) + "." + COL_PCT_CHANGE_DAILY]
+                pf_df[col_prefix + COL_PCT_CHANGE_DAILY] = pf_df["total"].pct_change()
+                pf_df[col_prefix + COL_CUMULATIVE_RETURN] = (
+                    1 + pf_df[col_prefix + COL_PCT_CHANGE_DAILY]
                 ).cumprod() - 1
                 pf_df = pf_df[
                     [
                         COL_DATE,
-                        str(portfolio.id) + "." + COL_CUMULATIVE_RETURN,
-                        str(portfolio.id) + "." + COL_PCT_CHANGE_DAILY,
+                        col_prefix + COL_CUMULATIVE_RETURN,
+                        col_prefix + COL_PCT_CHANGE_DAILY,
                     ]
                 ]
-                y_cols.append(str(portfolio.id) + "." + graph_col)
+                y_cols.append(col_prefix + graph_col)
                 df = pf_df
 
             for index in ALL_INDEXES:
@@ -350,31 +369,42 @@ def portfolio_detail(portfolio_id):
                 )
                 if len(index_df) <= 0:
                     continue
-                index_df.rename(
-                    columns={
-                        "closingprice": product.symbol + "." + COL_CLOSE,
-                        "volume": product.symbol + ".volume",
-                    },
-                    inplace=True,
-                )
-                index_df[product.symbol + "." + COL_PCT_CHANGE_DAILY] = index_df[
-                    product.symbol + "." + COL_CLOSE
+                col_prefix = product.symbol + "."
+                for col in index_df.columns:
+                    if col == COL_DATE:
+                        continue
+                    index_df[col_prefix + col] = index_df[col]
+                    del index_df[col]
+
+                index_df[col_prefix + COL_PCT_CHANGE_DAILY] = index_df[
+                    col_prefix + COL_CLOSE
                 ].pct_change()
-                index_df[product.symbol + "." + COL_CUMULATIVE_RETURN] = (
-                    1 + index_df[product.symbol + "." + COL_PCT_CHANGE_DAILY]
+                index_df[col_prefix + COL_CUMULATIVE_RETURN] = (
+                    1 + index_df[col_prefix + COL_PCT_CHANGE_DAILY]
                 ).cumprod() - 1
                 if df is None:
                     df = index_df
                 else:
 
                     df = pd.merge(df, index_df, on=COL_DATE, how="outer")
-                y_cols.append(product.symbol + "." + graph_col)
+                y_cols.append(col_prefix + graph_col)
 
             if df is not None:
                 fig = px.line(df, x=COL_DATE, y=y_cols, title="vs INDEX")
                 graph_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
             else:
                 graph_json = None
+
+            strat_recos: dict[str, dict[str, str]] = {}
+            recos: list[Recommendation] = []
+            if not portfolio.is_active:
+                for strategy in STRATEGIES:
+                    recos.extend(portfolio.strategy_recommendation(strategy))
+                for r in recos:
+                    if r.symbol not in strat_recos:
+                        strat_recos[r.symbol] = {}
+                    strat_recos[r.symbol][r.strategy] = f"{r.action}/{r.strength:2.2f}"
+
             return render_template(
                 "portfolio_detail.html",
                 portfolio=portfolio.as_dict(),
@@ -388,6 +418,8 @@ def portfolio_detail(portfolio_id):
                 order_form=order_form,
                 edit_holding_form=edit_holding_form,
                 step_form=step_form,
+                strat_recos=strat_recos,
+                strategies=STRATEGIES,
             )
 
         return jsonify({"message": "Portfolio not found"}), 404

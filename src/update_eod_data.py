@@ -29,7 +29,7 @@ def update_eod_data(product_id, symbol):
     log.info(f"Fetching data for {symbol}")
 
     stock = yf.Ticker(symbol)
-    hist = stock.history(period="max", interval="1d")
+    hist = stock.history(period="1mo", interval="1d")
 
     first_date = None
     last_date = None
@@ -144,9 +144,7 @@ def update():
     latest = None
     for product_id, symbol in products:
         update_eod_data(product_id, symbol)
-    log.info(
-        f"Equity market data fetched Earliest date: {earliest} Latest date: {latest}"
-    )
+    log.info(f"Equity market data fetched")
 
     compute_advance_decline_table()
 
